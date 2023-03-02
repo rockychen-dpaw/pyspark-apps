@@ -1,0 +1,8 @@
+.env*
+env*
+data*
+test*
+*.pyc
+*.sw[po]
+build_image*
+
