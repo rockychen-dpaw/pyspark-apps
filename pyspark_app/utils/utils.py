@@ -72,4 +72,19 @@ def set_file_mtime(f,d=None):
 
     os.utime(f,times=(t,t))
     return file_mtime(f)
+
+
+def mkdir(path):
+    if not os.path.exists(path):
+        try:
+            os.makedirs(path)
+        except:
+            if os.path.exists(path):
+                #already exist
+                return
+            else:
+                #failed
+                raise
+
+
     

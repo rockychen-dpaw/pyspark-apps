@@ -33,7 +33,7 @@ number_operator_map = {
     "<=":lambda l,val:np.less_equal(l,val),
     "between":lambda l,val:np.greater_equal(l,val[0]) & np.less(l,val[1]),
     "in":_number_in,
-    "avg":lambda l:[np.sum(l),l.shape[0]],
+    "avg_sum":lambda l:np.sum(l),
     "sum":lambda l:np.sum(l),
     "min":lambda l:np.min(l),
     "max":lambda l:np.max(l)
@@ -47,6 +47,14 @@ string_operator_map = {
     "in":_string_in,
     "contain":lambda l,val:np.core.defchararray.find(l,(val or "").encode())!=-1,
     "not contain":lambda l,val:np.core.defchararray.find(l,(val or "").encode())==-1
+}
+
+agg_operator_map = {
+    "min":"min",
+    "max":"max",
+    "sum":"sum",
+    "avg_sum":"sum",
+    "count":"count"
 }
 
 def _merge_avg(d1,d2):
@@ -70,7 +78,7 @@ merge_operator_map = {
     "min":lambda d1,d2: d1 if d1 <= d2 else d2,
     "max":lambda d1,d2: d1 if d1 >= d2 else d2,
     "sum":lambda d1,d2: d2 + d2,
-    "avg":_merge_avg
+    "avg_sum":lambda d1,d2: d2 + d2
 }
 
 def get_func(dtype,operator):
@@ -93,4 +101,11 @@ def get_merge_func(operator):
         return merge_operator_map[operator]
     except KeyError as ex:
         raise Exception("Merging the result of the operator({}) is not supported ".format(operator))
+
+def get_agg_func(operator):
+    try:
+        return agg_operator_map[operator]
+    except KeyError as ex:
+        raise Exception("Aggregation operator({}) is not supported ".format(operator))
+
     
