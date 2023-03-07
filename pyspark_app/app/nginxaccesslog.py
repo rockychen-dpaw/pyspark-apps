@@ -26,8 +26,20 @@ logger = logging.getLogger("pyspark_app.app.nginxaccesslog")
 HOURLY_REPORT = 1
 DAILY_REPORT = 2
 
+EXECUTOR_COLUMNID=0
+EXECUTOR_COLUMNNAME=1
+EXECUTOR_DTYPE=2
+EXECUTOR_TRANSFORMER=3
+EXECUTOR_COLUMNINFO=4
+EXECUTOR_STATISTICAL=5
+EXECUTOR_FILTERABLE=6
+EXECUTOR_GROUPABLE=7
+
+
 def get_harvester(datasetinfo):
-    #prepare the dataset
+    """
+    Return a harvester which harvest the nginx access log from source repository.
+    """
     harvester_config = datasetinfo.get("harvester")
     if not harvester_config:
         raise Exception("Nissing the configuration 'harvester'")
@@ -35,6 +47,9 @@ def get_harvester(datasetinfo):
     return harvester.get_harvester(harvester_config["name"],**harvester_config["parameters"])
 
 def filter_factory(filters,excludes):
+    """
+    Return a filter function to filter out the noisy data from nginx access log
+    """
     def _exclude(val):
         return not excludes(val)
 
@@ -63,8 +78,10 @@ def filter_factory(filters,excludes):
 
     
     if not filters and not excludes:
+        #no filters
         return None
     elif filters and excludes:
+        #both filters and excludes are congigured
         if not isinstance(filters,list):
             filters = [filters]
         if not isinstance(excludes,list):
@@ -78,6 +95,7 @@ def filter_factory(filters,excludes):
 
         return _filters_and_excludes
     elif filters:
+        #only filters are configured
         if isinstance(filters,list):
             if len(filters) == 1:
                 filters = filters[0]
@@ -91,6 +109,7 @@ def filter_factory(filters,excludes):
             filters = eval(filters)
             return filters
     else:
+        #only excludes are configured
         if isinstance(excludes,list):
             if len(excludes) == 1:
                 excludes = excludes[0]
@@ -104,128 +123,36 @@ def filter_factory(filters,excludes):
             excludes = eval(excludes)
             return _exclude
 
-def merge_reportresult_factory(reportset):
-
-    def _merge(data1,data2):
-        if data1 is None:
-            return data2
-        elif data2 is None:
-            return data1
-        elif isinstance(data1,list):
-            #data1 is list object
-            pass
-        elif isinstance(data2,list):
-            #swap data1 and data to guarantee data1 is list object
-            tmp = data1
-            data1 = data2
-            data2 = tmp
-        else:
-            #convert data1 to list
-            data1 = list(data1)
-
-        for i in range(len(reportset)):
-            data1[i] = operation.get_merge_func(reportset[i][1])(data1[i],data2[i])
-        
-        return data1
-
-    return _merge
-
-def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportset,report_sort_by):
-    """
-    column_map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
-    """
-    #find the sort indexes in group columns and reportset columns
-    #find whether the data should be converted or not before sort
-
-    sort_indexes = []
-    
-    for item in report_sort_by:
-        try:
-            i = report_group_by.index(item)
-            #get the column data if tranformer is required
-            col = column_map[item][0]  if column_map[item][2] and datatransformer.is_enum_func(column_map[item][2]) else None
-            sort_indexes.append((i,col))
-        except ValueError as ex:
-            #not in group by columns
-            for i in range(len(reportset)):
-                if reportset[i][2] == item:
-                    sort_indexes.append(i)
-
-    if len(sort_indexes) == 1:
-        #for single sort column, flat the indexes
-        sort_indexes = sort_indexes[0]
-
-    def _sort_with_single_key_column(data):
-        #use the key to sort
-        if sort_indexes[1]:
-            return datatransformer.get_enum_key(data[0][sort_indexes[0]],databaseurl=databaseurl,columnid=sort_indexes[1]]
-        else:
-            #use the value to sort
-            return data[0][sort_indexes[0]]
-
-    def _sort_with_single_value_column(data):
-        #use the value to sort
-        return data[1][sort_indexes]
-
-    def _sort(data):
-        result = [None] * len(sort_indexes)
-        pos = 0
-        for item in sort_indexes:
-            if isinstance(item,tuple):
-                #a  group by column
-                if item[1]:
-                    #use the key to sort
-                    result[pos] = datatransformer.get_enum_key(data[0][item[0]],databaseurl=databaseurl,columnid=item[1]]
-                else:
-                    #use the value to sort
-                    result[pos] = data[0][item[0]]
-            else: 
-                #a  data column
-                result[pos] = data[1][item]
-            pos += 1
-
-        return result
-
-    if isinstance(sort_indexes,tuple):
-        return _sort_with_single_key_column
-    elif isinstance(sort_indexes,list):
-        return _sort
-    else:
-        return _sort_with_single_value_column
-
-def _group_by_data_iterator(keys,databaseurl,enum_colids):
-    """
-    A iterator to convert the enum value to enum key if required
-    The transformation is only happened for group by columns
-    """
-    for i in  len(keys):
-        if enum_colids[i]:
-            return datatransformer.get_enum_key(keys[i],databaseurl=databaseurl,columnid=enum_colids[i]]
-        else:
-            yield keys[i]
-
-def group_by_report_iterator(report_result,databaseurl,enum_colids):
-    """
-    report_result: a iterator of tuple(keys, values)
-    enum_colids: a list with len(report_group_by) or len(keys), the corresponding memeber is column id if the related column need to convert into keys; otherwise the 
-    """
-    if enum_colids:
-        for k,v in report_result:
-            yield itertools.chain(_group_by_data_iterator(k,databaseurl,enum_colids),v)
-    else:
-        for k,v in report_result:
-            yield itertools.chain(k,v)
-
 def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,report_end,report_conditions,report_group_by,reportset,report_type):
+    """
+    Return a function to analysis a single nginx access log file
+    """
     def analysis(data):
+        """
+        Analysis a single nginx access log file
+        params:
+            data: a tupe (datetime of the nginx access log with format "%Y%m%d%H", file name of nginx access log)
+        """
         import h5py
         import numpy as np
         import pandas as pd
+
         cache_dir = datasetinfo.get("cache")
         if not cache_dir:
             raise Exception("Nissing the configuration 'cache_dir'")
 
-        #load the dataset columns
+        dataset_time = timezone.parse(data[0],"%Y%m%d%H")
+        logger.debug("dataset_time = {}, str={}".format(dataset_time,data[0]))
+
+        cache_folder = os.path.join(cache_dir,dataset_time.strftime("%Y-%m-%d"))
+        utils.mkdir(cache_folder)
+
+        harvester = None
+        #get the cached local data file and data index file
+        data_file = os.path.join(cache_folder,data[1])
+        data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
+
+        #load the dataset column settings, a map between columnindex and a tuple(filters and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
         allreportcolumns = {}
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
@@ -267,39 +194,21 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                     columns[0][1] = d[5].get("exclude")
 
 
-        dataset_time = timezone.parse(data[0],"%Y%m%d%H")
-        logger.debug("dataset_time = {}, str={}".format(dataset_time,data[0]))
+        if not os.path.exists(data_file) and os.path.exists(data_index_file):
+            #if data_file doesn't exist, data_indes_file should not exist too.
+            utils.remove_file(data_index_file)
 
-        cache_folder = os.path.join(cache_dir,dataset_time.strftime("%Y-%m-%d"))
-        utils.mkdir(cache_folder)
-
-        harvester = None
-        data_file = os.path.join(cache_folder,data[1])
-
-        data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
-
-        src_data_file = None
-        if not os.path.exists(data_file):
-            #local data file doesn't exist, find the source file path, and also remove the index file
-            harvester = get_harvester(datasetinfo)
-            if harvester.is_local():
-                src_data_file = harvester.get_abs_path(data[1])
-            else:
-                with tempfile.NamedTemporaryFile(prefix="datascience_ngx_log",delete=False) as f:
-                    src_data_file = f.name
-                harvester.saveas(data[1],src_data_file)
-
-            if os.path.exists(data_index_file):
-                utils.remove_file(data_index_file)
-
+        #check data index file
         dataset_size = 0
         if os.path.exists(data_index_file):
+            #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
             try:
                 with h5py.File(data_index_file,'r') as index_file:
                     for columnindex,reportcolumns in allreportcolumns.items():
                         for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
                             if  not column_filterable and not column_groupable and not column_statistical:
                                 continue
+                            #check whether the dataset is accessable by getting the size
                             dataset_size = index_file[column_name].shape[0]
 
             except:
@@ -307,10 +216,14 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 utils.remove_file(data_index_file)
 
         if os.path.exists(data_index_file):
+            #data index file is ready to use
             logger.debug("The index file({1}) is already generated for data file({0})".format(data_file,data_index_file))
         else:
+            #data index file does not exist, generate it.
+            #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
             with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),120) as lock:
                 if os.path.exists(data_index_file):
+                    #data index file are already generated by other process, check whether it is accessable.
                     try:
                         with h5py.File(data_index_file,'r') as index_file:
                             for columnindex,reportcolumns in allreportcolumns.items():
@@ -327,88 +240,131 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 if not os.path.exists(data_index_file):
                     #generate the index file
                     #get the line counter of the file
-                    dataset_size = utils.get_line_counter(src_data_file or data_file)
-                    logger.debug("The file({}) has {} records".format(src_data_file,dataset_size))
-                    #generate index file
-                    tmp_index_file = "{}.tmp".format(data_index_file)
-                    excluded_rows = 0
-                    context={
-                        "dataset_time":dataset_time
-                    }
-                    if src_data_file:
-                        #should get the data from source 
-                        tmp_data_file = "{}.tmp".format(data_file)
-                        data_f = open(tmp_data_file,'w')
-                        logwriter = csv.writer(data_f)
-                    else:
-                        #found the cached file, get the data from local cached file
-                        tmp_data_file = None
-                        data_f = None
-                        logwriter = None
-
                     try:
+                        indexbuff_baseindex = 0
+                        indexbuff_index = 0
+                        indexdatasets = {}
+                        indexbuffs = {}
+
+                        databuff_index = 0
+                        databuff = None
+                        #prepare the source data file if required.
+                        src_data_file = None
+                        if not os.path.exists(data_file):
+                            #local data file doesn't exist, download the source file if required as src_data_file
+                            harvester = get_harvester(datasetinfo)
+                            if harvester.is_local():
+                                src_data_file = harvester.get_abs_path(data[1])
+                            else:
+                                with tempfile.NamedTemporaryFile(prefix="datascience_ngx_log",delete=False) as f:
+                                    src_data_file = f.name
+                                harvester.saveas(data[1],src_data_file)
+
+                        #get the size of the original access log file or the local cached access log file which excludes the noisy datas.
+                        dataset_size = utils.get_line_counter(src_data_file or data_file)
+                        logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
+
+                        #generate index file
+                        tmp_index_file = "{}.tmp".format(data_index_file)
+                        excluded_rows = 0
+                        context={
+                            "dataset_time":dataset_time
+                        }
+                        if src_data_file:
+                            #the local cached data file doesnot exist, 
+                            #should generate the local cached data file by excluding the noisy data from original dataset.
+                            tmp_data_file = "{}.tmp".format(data_file)
+                            data_f = open(tmp_data_file,'w')
+                            logwriter = csv.writer(data_f)
+                            databuff = [None] * databuffer_size
+                        else:
+                            #found the cached file, get the data from local cached file
+                            tmp_data_file = None
+                            data_f = None
+                            logwriter = None
+                            databuff = None
+
+
                         with h5py.File(tmp_index_file,'w') as tmp_h5:
-                            buffer_size = 10000
+                            try:
+                                buffer_size = datasetinfo.get("indexbatchsize",10000)
+                            except:
+                                buffer_size = 10000
+                            try:
+                                databuffer_size = datasetinfo.get("databatchsize",1000)
+                            except:
+                                databuffer_size = 10000
+
+
                             with open(src_data_file or data_file) as f:
                                 logreader = csv.reader(f)
-                                dataset_baseindex = 0
-                                buff_index = 0
-                                datasets = {}
-                                databuffs = {}
-    
-                                for request in logreader:
+
+                                for item in logreader:
                                     #check the filter first
                                     if src_data_file:
                                         #data are retrieved from source, should execute the filter logic
                                         excluded = False
                                         for columnindex,reportcolumns in allreportcolumns.items():
-                                            value = request[columnindex]
+                                            value = item[columnindex]
                                             excluded = False
                                             if  reportcolumns[0] and not reportcolumns[0](value):
                                                 #excluded
                                                 excluded = True
                                                 break
                                         if excluded:
+                                            #record are excluded
                                             excluded_rows += 1
                                             continue
-                                        #data are retrieved from source,cache the data 
-                                        logwriter.writerow(request)
-                                        
+                                        #data are retrieved from source,append the data to local data file
+                                        databuff[databuff_index] = item
+                                        databuff_index += 1
+                                        if databuff_index == databuff_size:
+                                            #databuff is full, flush to file 
+                                            logwriter.writerows(databuff)
+                                            databuff_index = 0
+                                    
+                                    #generate the dataset for each index column
                                     for columnindex,reportcolumns in allreportcolumns.items():
-                                        value = request[columnindex]
+                                        value = item[columnindex]
                                         for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
                                             if  not column_filterable and not column_groupable and not column_statistical:
+                                                #no need to create index 
                                                 continue
                 
                                             #create the buffer and hdf5 dataset for column
-                                            if dataset_baseindex == 0 and buff_index == 0:
-                                                datasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
-                                                databuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
+                                            if indexbuff_baseindex == 0 and indexbuff_index == 0:
+                                                indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
+                                                indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
                 
-                                            #save the transformed column data to data buff
+                                            #get the index data for each index column
                                             if column_transformer:
+                                                #data  transformation is required
                                                 if column_columninfo and column_columninfo.get("parameters"):
-                                                    databuffs[column_name][buff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,**column_columninfo["parameters"])
+                                                    indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,**column_columninfo["parameters"])
                                                 else:
-                                                    databuffs[column_name][buff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context)
+                                                    indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context)
                                             else:
-                                                databuffs[column_name][buff_index] = value.strip() if value else ""
+                                                indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
                 
-                                            if buff_index == buffer_size - 1:
+                                            if indexbuff_index == buffer_size - 1:
                                                 #buff is full, write to hdf5 file
                                                 try:
-                                                    datasets[column_name].write_direct(databuffs[column_name],np.s_[0:buffer_size],np.s_[dataset_baseindex:dataset_baseindex + buffer_size])
+                                                    indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + buffer_size])
                                                 except Exception as ex:
                                                     logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,buffer_size,str(ex)))
                                                     raise
     
                                                 lock.renew()
                 
-                                    buff_index += 1
-                                    if buff_index == buffer_size:
-                                        #buff is full, data is already saved to hdf5 file, set buff_index and dataset_baseindex
-                                        buff_index = 0
-                                        dataset_baseindex += buffer_size
+                                    indexbuff_index += 1
+                                    if indexbuff_index == buffer_size:
+                                        #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
+                                        indexbuff_index = 0
+                                        indexbuff_baseindex += buffer_size
+
+                            if databuff_index > 0:
+                                #still have some data in data buff, flush it to file
+                                logwriter.writerows(databuff[:databuff_index])
                             
                             #still have data in buff, write them to hdf5 file
                             for columnindex,reportcolumns in allreportcolumns.items():
@@ -416,31 +372,36 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                     if  not column_filterable and not column_groupable and not column_statistical:
                                         continue
                 
-                                    if buff_index > 0:
-                                        datasets[column_name].write_direct(databuffs[column_name],np.s_[0:buff_index],np.s_[dataset_baseindex:dataset_baseindex + buff_index])
+                                    if indexbuff_index > 0:
+                                        indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
                 
-                            if dataset_baseindex + buff_index + excluded_rows != dataset_size:
-                                raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,dataset_size,dataset_baseindex + buff_index,data_index_file))
+                            if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
+                                raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,data_index_file))
                             else:
-                                logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,dataset_baseindex + buff_index,excluded_rows))
+                                logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
                     finally:
-                        if data_f:
+                        if src_data_file:
                             try:
                                 data_f.close()
                             except:
                                 pass
+
+                            if not harvester.is_local():
+                                #src data file is a temp file , delete it
+                                utils.remove_file(src_data_file)
         
-                    #release the memory
-                    datasets.clear()
-                    datasets = None
-                    databuffs.clear()
-                    databuffs = None
+                        #release the memory
+                        indexdatasets = None
+                        indexbuffs = None
+                        databuff = None
                     
                     #rename the tmp data file to data file if required
-                    if tmp_data_file:
+                    if src_data_file:
                         os.rename(tmp_data_file,data_file)
+
                     #rename the tmp file to index file
                     if excluded_rows:
+                        #some rows are excluded from access log, the size of the index dataset should be shrinked to (dataset_baseindex + buff_index)
                         dataset_size = dataset_baseindex + buff_index
                         tmp2_index_file = "{}.tmp2".format(data_index_file)
                         with h5py.File(tmp2_index_file,'w') as tmp2_h5:
@@ -457,10 +418,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
                         os.rename(tmp2_index_file,data_index_file)
 
-                        try:
-                            os.remove(tmp_index_file)
-                        except:
-                            pass
+                        utils.remove_file(tmp_index_file)
                     else:
                         os.rename(tmp_index_file,data_index_file)
 
@@ -477,44 +435,47 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
         #begin the perform the filtering, group by and statistics logic
         #find the  share data buffer used for filtering ,group by and statistics
+        int_buffer = None
+        float_buffer = None
+        string_buffer = None
         column_data = None
-        cond_result = None
-        int_buffer = [None,None]
-        float_buffer = [None,None]
-        string_buffer = [None,None]
-        #the data buffer will put into the map data_buffers which is a map (key = id(condition or group by or reportset) value = buffer(int_buffer, float_buffer or string_buffer)
+        #A map to show how to use the share data buff in filtering, group by and reportset.
+        #key will be the id of the member from filtering or group by or reportset if the column included in the list member will use the databuff;
+        #value is the data buff(int_buffer or float_buffer or string_buffer) which the column should use.
         data_buffers = {}
+
+        #the varialbe for the filter result.
+        cond_result = None
 
         #conditions are applied one by one, so it is better to share the buffers among conditions
         if report_conditions:
             #apply the conditions, try to share the np array among conditions to save memory
             for item in report_conditions:
                 col = column_map[item[0]]
-                col_type = col[2]
+                col_type = col[EXECUTOR_DTYPE]
                 if datatransformer.is_int_type(col_type):
-                    data_buffers[id(item)] = int_buffer
-                    if int_buffer[0]:
+                    if int_buffer:
                         int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
                     else:
-                        int_buffer = col_type
+                        int_buffer = [col_type,None]
+                    data_buffers[id(item)] = int_buffer
                 elif datatransformer.is_float_type(col_type):
-                    data_buffers[id(item)] = float_buffer
-                    if float_buffer[0]:
+                    if float_buffer:
                         float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
                     else:
-                        float_buffer[0] = col_type
+                        float_buffer = [col_type,None]
+                    data_buffers[id(item)] = float_buffer
                 elif datatransformer.is_string_type(col_type):
-                    data_buffers[id(item)] = string_buffer
-                    if string_buffer[0]:
+                    if string_buffer:
                         string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
                     else:
-                        string_buffer[0] = col_type
+                        string_buffer = [col_type,None]
+                    data_buffers[id(item)] = string_buffer
 
         if report_group_by:
             #group_by feature is required
             #Use pandas to implement 'group by' feature, all dataset including columns in 'group by' and 'reportset' will be loaded into the memory.
             #use the existing data buff if it already exist for some column
-            
             if data_buffers:
                 closest_int_column = [None,None,None] #three members (the item with lower type, the item with exact type,the item with upper type), each memeber is None or list with 2 members:[ group_by or reportset item,col_type]
                 closest_float_column = [None,None,None]
@@ -524,249 +485,153 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     if colname == "*":
                         continue
                     col = column_map[colname]
-                    col_type = col[2]
-                    if datatransformer.is_int_type(col_type):
-                        if int_buffer[0]:
-                            if closest_int_column[1] and closest_int_column[1][1] == int_buffer[0]:
-                                #already match exactly
-                                continue
-                            elif int_buffer[0] == col_type:
-                                #match exactly
-                                closest_int_column[1] = [item,col_type]
-                            else:
-                                t = datatransformer.ceiling_type(int_buffer[0],col_type)
-                                if t == int_buffer[0]:
-                                    #the int_buffer can hold the current report set column, reportset column's type is less then int_buffer's type
-                                    #choose the column which is closest to int_buffer type
-                                    if closest_int_column[0]:
-                                        if closest_int_column[0][1] < col_type:
-                                            closest_int_column[0][1] = [item,col_type]
-                                    else:
-                                        closest_int_column[0] = [item,col_type]
-                                elif t == col_type:
-                                    #the reportset column can hold the int_buffer data, reportset column's type is greater then int_buffer's type
-                                    #choose the column which is closest to int_buffer type
-                                    if closest_int_column[2]:
-                                        if closest_int_column[2][1] > col_type:
-                                            closest_int_column[2][1] = [item,col_type]
-                                    else:
-                                        closest_int_column[2] = [item,col_type]
+                    col_type = col[EXECUTOR_DTYPE]
+                    for is_func,data_buffer,closest_column in (
+                        (datatransformer.is_int_type,int_buffer,closest_int_column),
+                        (datatransformer.is_float_type,float_buffer,closest_float_column),
+                        (datatransformer.is_string_type,string_buffer,closest_string_column)):
+                        if is_func(col_type):
+                            if data_buffer:
+                                if closest_column[1] and closest_column[1][1] == data_buffer[0]:
+                                    #already match exactly
+                                    continue
+                                elif data_buffer[0] == col_type:
+                                    #match exactly
+                                    closest_column[1] = [item,col_type]
                                 else:
-                                    #both the reportset column and in_buff can't hold each other,the result type is greater then int_buffer's type and reportset column type
-                                    #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
-                                    if closest_int_column[2]:
-                                        if datatransformer.ceiling_type(int_buffer[0],closest_int_column[2][1]) == closest_int_column[2][1]:
-                                            #the current chosed column's type can hold int_buffer data
-                                            continue
-                                        elif closest_int_column[2][1] > col_type:
-                                            closest_int_column[2][1] = [item,col_type]
+                                    t = datatransformer.ceiling_type(data_buffer[0],col_type)
+                                    if t == data_buffer[0]:
+                                        #the int_buffer can hold the current report set column, reportset column's type is less then int_buffer's type
+                                        #choose the column which is closest to int_buffer type
+                                        if closest_column[0]:
+                                            if closest_column[0][1] < col_type:
+                                                closest_column[0][1] = [item,col_type]
+                                        else:
+                                            closest_column[0] = [item,col_type]
+                                    elif t == col_type:
+                                        #the reportset column can hold the int_buffer data, reportset column's type is greater then int_buffer's type
+                                        #choose the column which is closest to int_buffer type
+                                        if closest_column[2]:
+                                            if closest_column[2][1] > col_type:
+                                                closest_column[2][1] = [item,col_type]
+                                        else:
+                                            closest_column[2] = [item,col_type]
                                     else:
-                                        closest_int_column[2] = [item,col_type]
-                    elif datatransformer.is_float_type(col_type):
-                        if float_buffer[0]:
-                            if closest_float_column[1] and closest_float_column[1][1] == float_buffer[0]:
-                                #already match exactly
-                                continue
-                            elif float_buffer[0] == col_type:
-                                #match exactly
-                                closest_float_column[1] = [item,col_type]
-                            else:
-                                t = datatransformer.ceiling_type(float_buffer[0],col_type)
-                                if t == float_buffer[0]:
-                                    #the float_buffer can hold the current report set column, reportset column's type is less then float_buffer's type
-                                    #choose the column which is closest to float_buffer type
-                                    if closest_float_column[0]:
-                                        if closest_float_column[0][1] < col_type:
-                                            closest_float_column[0][1] = [item,col_type]
-                                    else:
-                                        closest_float_column[0] = [item,col_type]
-                                elif t == col_type:
-                                    #the reportset column can hold the float_buffer data, reportset column's type is greater then float_buffer's type
-                                    #choose the column which is closest to float_buffer type
-                                    if closest_float_column[2]:
-                                        if closest_float_column[2][1] > col_type:
-                                            closest_float_column[2][1] = [item,col_type]
-                                    else:
-                                        closest_float_column[2] = [item,col_type]
-                                else:
-                                    #both the reportset column and in_buff can't hold each other,the result type is greater then float_buffer's type and reportset column type
-                                    #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
-                                    if closest_float_column[2]:
-                                        if datatransformer.ceiling_type(float_buffer[0],closest_float_column[2][1]) == closest_float_column[2][1]:
-                                            #the current chosed column's type can hold int_buffer data
-                                            continue
-                                        elif closest_float_column[2][1] > col_type:
-                                            closest_float_column[2][1] = [item,col_type]
-                                    else:
-                                        closest_float_column[2] = [item,col_type]
-                    elif datatransformer.is_string_type(col_type):
-                        if string_buffer[0]:
-                            if closest_string_column[1] and closest_string_column[1][1] == string_buffer[0]:
-                                #already match exactly
-                                continue
-                            elif string_buffer[0] == col_type:
-                                #match exactly
-                                closest_string_column[1] = [item,col_type]
-                            else:
-                                t = datatransformer.ceiling_type(string_buffer[0],col_type)
-                                if t == string_buffer[0]:
-                                    #the string_buffer can hold the current report set column, reportset column's type is less then string_buffer's type
-                                    #choose the column which is closest to string_buffer type
-                                    if closest_string_column[0]:
-                                        if closest_string_column[0][1] < col_type:
-                                            closest_string_column[0][1] = [item,col_type]
-                                    else:
-                                        closest_string_column[0] = [item,col_type]
-                                elif t == col_type:
-                                    #the reportset column can hold the string_buffer data, reportset column's type is greater then string_buffer's type
-                                    #choose the column which is closest to string_buffer type
-                                    if closest_string_column[2]:
-                                        if closest_string_column[2][1] > col_type:
-                                            closest_string_column[2][1] = [item,col_type]
-                                    else:
-                                        closest_string_column[2] = [item,col_type]
-                                else:
-                                    #both the reportset column and in_buff can't hold each other,the result type is greater then string_buffer's type and reportset column type
-                                    #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
-                                    if closest_string_column[2]:
-                                        if datatransformer.ceiling_type(string_buffer[0],closest_string_column[2][1]) == closest_string_column[2][1]:
-                                            #the current chosed column's type can hold int_buffer data
-                                            continue
-                                        elif closest_string_column[2][1] > col_type:
-                                            closest_string_column[2][1] = [item,col_type]
-                                    else:
-                                        closest_string_column[2] = [item,col_type]
+                                        #both the reportset column and in_buff can't hold each other,the result type is greater then int_buffer's type and reportset column type
+                                        #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
+                                        if closest_column[2]:
+                                            if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
+                                                #the current chosed column's type can hold int_buffer data
+                                                continue
+                                            elif closest_column[2][1] > col_type:
+                                                closest_column[2][1] = [item,col_type]
+                                        else:
+                                            closest_column[2] = [item,col_type]
+                            break
+
+
 
                 #choose the right column to share the data buffer chosed in report conditions
-                if closest_int_column[1]:
-                    #one column in group_by or reportset has the same type as int_buffer
-                    data_buffer[id(closest_int_column[1][0]] = int_buffer
-                elif closest_int_column[2] and datatransformer.ceiling_type(int_buffer[0],closest_int_column[2][1]) == closest_int_column[2][1]:
-                    #one column in group_by or reportset has a data type which is bigger than int_buffer
-                    int_buffer[0] = closest_int_column[2][1]
-                    data_buffer[id(closest_int_column[2][0]] = int_buffer
-                elif closest_int_column[0] and datatransformer.ceiling_type(int_buffer[0],closest_int_column[0][1]) == closest_int_column[0][1]:
-                    #one column in group_by or reportset has a data type which is less than int_buffer
-                    data_buffer[id(closest_int_column[0][0]] = int_buffer
-                elif closest_int_column[0]:
-                    #choose the column whose type is less than int_buffer but closest to int_buffer
-                    data_buffer[id(closest_int_column[0][0]] = int_buffer
-                elif closest_int_column[2]:
-                    #choose the column whose type is greater than int_buffer but closest to int_buffer
-                    int_buffer[0] = closest_int_column[2][1]
-                    data_buffer[id(closest_int_column[2][0]] = int_buffer
+                for data_buffer,closest_column in (
+                    (int_buffer,closest_int_column),
+                    (float_buffer,closest_float_column),
+                    (string_buffer,closest_string_column)):
+                    if closest_column[1]:
+                        #one column in group_by or reportset has the same type as int_buffer
+                        data_buffers[id(closest_column[1][0])] = data_buffer
+                    elif closest_column[2] and datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
+                        #one column in group_by or reportset has a data type which is bigger than int_buffer
+                        data_buffer[0] = closest_column[2][1]
+                        data_buffers[id(closest_column[2][0])] = data_buffer
+                    elif closest_column[0] and datatransformer.ceiling_type(data_buffer[0],closest_column[0][1]) == closest_column[0][1]:
+                        #one column in group_by or reportset has a data type which is less than int_buffer
+                        data_buffers[id(closest_column[0][0])] = data_buffer
+                    elif closest_column[0]:
+                        #choose the column whose type is less than int_buffer but closest to int_buffer
+                        data_buffers[id(closest_int_column[0][0])] = data_buffer
+                    elif closest_column[2]:
+                        #choose the column whose type is greater than int_buffer but closest to int_buffer
+                        data_buffer[0] = closest_column[2][1]
+                        data_buffers[id(closest_column[2][0])] = data_buffer
 
-
-                if closest_float_column[1]:
-                    #one column in group_by or reportset has the same type as float_buffer
-                    data_buffer[id(closest_float_column[1][0]] = float_buffer
-                elif closest_float_column[2] and datatransformer.ceiling_type(float_buffer[0],closest_float_column[2][1]) == closest_float_column[2][1]:
-                    #one column in group_by or reportset has a data type which is bigger than float_buffer
-                    float_buffer[0] = closest_float_column[2][1]
-                    data_buffer[id(closest_float_column[2][0]] = float_buffer
-                elif closest_float_column[0] and datatransformer.ceiling_type(float_buffer[0],closest_float_column[0][1]) == closest_float_column[0][1]:
-                    #one column in group_by or reportset has a data type which is less than float_buffer
-                    data_buffer[id(closest_float_column[0][0]] = float_buffer
-                elif closest_float_column[0]:
-                    #choose the column whose type is less than float_buffer but closest to float_buffer
-                    data_buffer[id(closest_float_column[0][0]] = float_buffer
-                elif closest_float_column[2]:
-                    #choose the column whose type is greater than float_buffer but closest to float_buffer
-                    float_buffer[0] = closest_float_column[2][1]
-                    data_buffer[id(closest_float_column[2][0]] = float_buffer
-
-                if closest_string_column[1]:
-                    #one column in group_by or reportset has the same type as string_buffer
-                    data_buffer[id(closest_string_column[1][0]] = string_buffer
-                elif closest_string_column[2] and datatransformer.ceiling_type(string_buffer[0],closest_string_column[2][1]) == closest_string_column[2][1]:
-                    #one column in group_by or reportset has a data type which is bigger than string_buffer
-                    string_buffer[0] = closest_string_column[2][1]
-                    data_buffer[id(closest_string_column[2][0]] = string_buffer
-                elif closest_string_column[0] and datatransformer.ceiling_type(string_buffer[0],closest_string_column[0][1]) == closest_string_column[0][1]:
-                    #one column in group_by or reportset has a data type which is less than string_buffer
-                    data_buffer[id(closest_string_column[0][0]] = string_buffer
-                elif closest_string_column[0]:
-                    #choose the column whose type is less than string_buffer but closest to string_buffer
-                    data_buffer[id(closest_string_column[0][0]] = string_buffer
-                elif closest_string_column[2]:
-                    #choose the column whose type is greater than string_buffer but closest to string_buffer
-                    string_buffer[0] = closest_string_column[2][1]
-                    data_buffer[id(closest_string_column[2][0]] = string_buffer
-
-        else:
+        elif isinstance(reportset,(list,tuple)):
             #group_by feature is not required.
             #perform the statistics one by one, try best to share the data buffer
             for item in reportset:
+                if item[0] == "*":
+                    continue
                 col = column_map[item[0]]
-                col_type = col[2]
+                col_type = col[EXECUTOR_DTYPE]
                 if datatransformer.is_int_type(col_type):
-                    data_buffers[id(item)] = int_buffer
-                    if int_buffer[0]:
+                    if int_buffer:
                         int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
                     else:
-                        int_buffer = col_type
+                        int_buffer = [col_type,None]
+                    data_buffers[id(item)] = int_buffer
                 elif datatransformer.is_float_type(col_type):
-                    data_buffers[id(item)] = float_buffer
-                    if float_buffer[0]:
+                    if float_buffer:
                         float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
                     else:
-                        float_buffer[0] = col_type
+                        float_buffer = [col_type,None]
+                    data_buffers[id(item)] = float_buffer
                 elif datatransformer.is_string_type(col_type):
-                    data_buffers[id(item)] = string_buffer
-                    if string_buffer[0]:
+                    if string_buffer:
                         string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
                     else:
-                        string_buffer[0] = col_type
+                        string_buffer = [col_type,None]
+                    data_buffers[id(item)] = string_buffer
 
         with h5py.File(data_index_file,'r') as index_h5:
             #filter the dataset
             if report_conditions:
                 #apply the conditions, try to share the np array among conditions to save memory
-
                 previous_item = None
                 for cond in report_conditions:
                     #each condition is a tuple(column, operator, value), value is dependent on operator and column type
                     col = column_map[cond[0]]
-                    col_type = col[2]
 
-                    #map the value to internal value used by dataset
-                    cond[2] = cond[2].strip() if cond[2] else cond[2]
-                    if cond[2].startswith('[') and cond[2].endswith(']'):
-                        cond[2] = json.loads(cond[2])
-                    if isinstance(cond[2],list):
-                        for i in range(len(cond[2])):
-                            if col[3]:
+                    #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                    #map the value to internal value used by dataset if it is not mapped in the driver
+                    if cond[3]:
+                        #value is not mapped or partly mapped.
+                        if isinstance(cond[2],list):
+                            for i in cond[3]:
+                                if col[EXECUTOR_TRANSFORMER]:
+                                    #need transformation
+                                    if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
+                                        #is enum type
+                                        cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                                        if not cond[2]:
+                                            #searching value doesn't exist
+                                            cond[2][i] = None
+                                            break
+                                    else:
+                                        if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
+                                            cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
+                                        else:
+                                            cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                            if any(v is None for v in cond[2]):
+                                #remove the None value from value list
+                                cond[2] = [v for v in cond[2] if v is not None]
+                            if not cond[2]:
+                                #searching value doesn't exist
+                                cond_result = None
+                                break
+                        else:
+                            if col[EXECUTOR_TRANSFORMER]:
                                 #need transformation
-                                if col[5]:
+                                if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
                                     #is enum type
-                                    cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[0])
+                                    cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
                                     if not cond[2]:
                                         #searching value doesn't exist
-                                        cond[2][i] = None
+                                        cond_result = None
                                         break
                                 else:
-                                    if col[4] and col[4].get("parameters"):
-                                        cond[2][i] = datatransformer.transform(col[3],cond[2][i],databaseurl=databaseurl,columnid=col[0],**col[4]["parameters"])
+                                    if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
+                                        cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
                                     else:
-                                        cond[2][i] = datatransformer.transform(col[3],cond[2][i],databaseurl=databaseurl,columnid=col[0])
-                        if any(v is None for v in cond[2]):
-                            #remove the None value from value list
-                            cond[2] = [v for v in cond[2] if v is not None]
-                    else:
-                        if col[3]:
-                            #need transformation
-                            if col[5]:
-                                #is enum type
-                                cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[0])
-                                if not cond[2]:
-                                    #searching value doesn't exist
-                                    cond_result = None
-                                    break
-                            else:
-                                if col[4] and col[4].get("parameters"):
-                                    cond[2] = datatransformer.transform(col[3],cond[2],databaseurl=databaseurl,columnid=col[0],**col[4]["parameters"])
-                                else:
-                                    cond[2] = datatransformer.transform(col[3],cond[2],databaseurl=databaseurl,columnid=col[0])
+                                        cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
 
                     if not previous_item or previous_item[0] != cond[0]:
                         #condition is applied on different column
@@ -775,13 +640,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                             buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
                             column_data = buff[1]
                         except KeyError as ex:
-                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[2]))
+                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE]))
                         
-                        index_h5[col[1]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                     if cond_result is None:
-                        cond_result = operation.get_func(col[2],cond[1])(column_data,cond[2])
+                        cond_result = operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
                     else:
-                        cond_result &= operation.get_func(col[2],cond[1])(column_data,cond[2])
+                        cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
 
                     previous_item = cond
 
@@ -799,7 +664,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 #return the detail logs
                 if filtered_rows == 0:
                     return [(data[0],data[1],0,None)]
-                elif filtered_rows == datast_size:
+                elif filtered_rows == dataset_size:
                     #all logs are returned
                     #unlikely to happen.
                     report_file = os.path.join(cache_dir,"reports","{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
@@ -827,31 +692,35 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 #create pandas dataframe
                 df_datas = collections.OrderedDict()
                 if report_type == HOURLY_REPORT:
-                    df_datas["request_time"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
+                    df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
                 elif report_type == DAILY_REPORT:
-                    df_datas["request_time"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
+                    df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
 
                 for item in itertools.chain(report_group_by,reportset):
                     colname = item[0] if isinstance(item,list) else item
                     if colname == "*":
                         continue
                     col = column_map[colname]
-                    col_type = col[2]
+                    col_type = col[EXECUTOR_DTYPE]
                     try:
                         buff = data_buffers.pop(id(item))
                         buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
                         column_data = buff[1]
                     except KeyError as ex:
-                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[2]))
+                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
                         
                     index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                    df_datas[colname] = column_data[cond_result])
+                    if filtered_rows == dataset_size:
+                        #all records are satisfied with the report condition
+                        df_datas[colname] = column_data
+                    else:
+                        df_datas[colname] = column_data[cond_result]
 
                 #create pandas dataframe
                 df = pd.DataFrame(df_data)
                 #get the group object
                 if report_type:
-                    df_group = df.groupby(["request_time",*report_group_by],group_keys=True)
+                    df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
                 else:
                     df_group = df.groupby(report_group_by,group_keys=True)
                 #perfrom the statistics on group
@@ -860,7 +729,6 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 previous_item = None
                 for item in reportset:
                     col = column_map[item[0]]
-                    col_type = col[2]
                     if not previous_item or previous_item[0] != item[0]:
                         statics_map[item[0]] = [operation.get_agg_func(item[1])]
                         previous_item = item
@@ -877,8 +745,6 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 previous_item = None
                 if report_type == HOURLY_REPORT:
                     report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
-                elif report_type == DAILY_REPORT:
-                    report_data = [dataset_time.strftime("%Y-%m-%d 00:00:00")]
                 else:
                     report_data = []
                 for item in reportset:
@@ -887,13 +753,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         previous_item = item
                         if item[0] != "*":
                             col = column_map[item[0]]
-                            col_type = col[2]
+                            col_type = col[EXECUTOR_DTYPE]
                             try:
                                 buff = data_buffers.pop(id(item))
                                 buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
                                 column_data = buff[1]
                             except KeyError as ex:
-                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[2]))
+                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
                         
                             index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
 
@@ -908,8 +774,155 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
                 logger.debug("dataset={},reportset={},report_data={}".format(data[1],reportset,report_data))
 
-                return [report_data]
+                if report_type == DAILY_REPORT:
+                    #return a dict to perform the function 'reducebykey'
+                    return {dataset_time.strftime("%Y-%m-%d 00:00:00"):report_data}
+                else:
+                    return [report_data]
     return analysis
+
+DRIVER_COLUMNID=0
+DRIVER_DTYPE=1
+DRIVER_TRANSFORMER=2
+DRIVER_COLUMNINFO=3
+DRIVER_STATISTICAL=4
+DRIVER_FILTERABLE=5
+DRIVER_GROUPABLE=6
+
+def merge_reportresult_factory(reportset):
+    """
+    Return a functon which can be used by reduce and reducebykey to merge the results returned by spark's map function.
+    """
+    def _merge(data1,data2):
+        if data1 is None:
+            return data2
+        elif data2 is None:
+            return data1
+        elif isinstance(data1,list):
+            #data1 is list object
+            pass
+        elif isinstance(data2,list):
+            #swap data1 and data to guarantee data1 is list object
+            tmp = data1
+            data1 = data2
+            data2 = tmp
+        else:
+            #convert data1 to list
+            data1 = list(data1)
+
+        for i in range(len(reportset)):
+            data1[i] = operation.get_merge_func(reportset[i][1])(data1[i],data2[i])
+        
+        return data1
+
+    return _merge
+
+def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportset,report_sort_by):
+    """
+    Return a function which is used to sort the group by result.
+    Desc is only supported for number column including reportset(all columns in reportset are statistical number column and groupe column in report group-by data
+    params:
+        column_map: a map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
+    """
+    #find the sort indexes in group columns and reportset columns
+    #find whether the data should be converted or not before sort
+    sort_indexes = [] # for group by column: a tuple (group_by index or reportset index,columnid,asc?), for reportset column: a tuple(reportset index, asc?)
+    
+    for item in report_sort_by:
+        try:
+            if item[0] == "__request_time__":
+                sort_indexes.append((i,None,True))
+                continue
+                
+            i = report_group_by.index(item[0])
+            #sort by the enum key only if the column is a enum type but not a enum group type
+            colid = column_map[item][DRIVER_COLUMNID]  if column_map[item][DRIVER_TRANSFORMER] and datatransformer.is_enum_func(column_map[item][DRIVER_TRANSFORMER]) and not datatransformer.is_group_func(column_map[item][DRIVER_TRANSFORMER]) else None
+            sort_indexes.append((i,colid,True if colid else item[1]))
+        except ValueError as ex:
+            #not in group by columns
+            for i in range(len(reportset)):
+                if reportset[i][2] == item:
+                    sort_indexes.append((i,item[1]))
+                    break
+
+    if len(sort_indexes) == 1:
+        #for single sort column, flat the indexes
+        sort_indexes = sort_indexes[0]
+
+    def _sort_with_single_key_column(data):
+        #use one of the group by column to sort
+        if sort_indexes[1]:
+            return datatransformer.get_enum_key(data[0][sort_indexes[0]],databaseurl=databaseurl,columnid=sort_indexes[1])
+        elif sort_indexes[2]:
+            #use the value to sort, asc
+            return data[0][sort_indexes[0]]
+        else:
+            #use the value to sort, desc
+            return data[0][sort_indexes[0]] * -1
+
+    def _sort_with_single_value_column(data):
+        #use the one of the value column to sort
+        return data[1][sort_indexes[0]] if sort_indexes[1] else (-1 * data[1][sort_indexes[0]])
+
+    def _sort(data):
+        result = [None] * len(sort_indexes)
+        pos = 0
+        for item in sort_indexes:
+            if len(item) == 3:
+                #a  group by column
+                if item[1]:
+                    #use the key to sort
+                    result[pos] = datatransformer.get_enum_key(data[0][item[0]],databaseurl=databaseurl,columnid=item[1])
+                elif item[2]:
+                    #use the value to sort ,asc
+                    result[pos] = data[0][item[0]]
+                else:
+                    #use the value to sort ,desc
+                    result[pos] = data[0][item[0]] * -1
+            elif item[1]: 
+                #a  data column, asc
+                result[pos] = data[1][item]
+            else:
+                #a  data column, desc
+                result[pos] = data[1][item] * -1
+            pos += 1
+
+        return result
+
+    if isinstance(sort_indexes,tuple):
+        return _sort_with_single_key_column
+    elif isinstance(sort_indexes,list):
+        return _sort
+    else:
+        return _sort_with_single_value_column
+
+def _group_by_data_iterator(keys,databaseurl,enum_colids):
+    """
+    A iterator to convert the enum value to enum key if required
+    The transformation is only happened for group by columns
+    """
+    for i in  len(keys):
+        if enum_colids[i]:
+            return datatransformer.get_enum_key(keys[i],databaseurl=databaseurl,columnid=enum_colids[i])
+        else:
+            yield keys[i]
+
+def group_by_report_iterator(report_result,databaseurl,enum_colids):
+    """
+    Return a iterator to iterate the group by report_result as a list data which contain the group by column data and value data, also convert the gorup by column data from enumid to enum key if required.
+    params:
+        report_result: a iterator of tuple(keys, values)
+        enum_colids: a list with len(report_group_by) or len(keys), the corresponding memeber is column id if the related column need to convert into keys; otherwise the 
+    """
+    if enum_colids:
+        #converting the enum id to enum key is required
+        for k,v in report_result:
+            yield itertools.chain(_group_by_data_iterator(k,databaseurl,enum_colids),v)
+    else:
+        #converting the enum id to enum key is not required
+        for k,v in report_result:
+            yield itertools.chain(k,v)
+
 
 def run():
     """
@@ -942,9 +955,9 @@ def run():
                     raise Exception("Dataset({}) doesn't exist.".format(datasetid))
                 dataset_name,dataset_info = dataset
 
-                cursor.execute("select name,columnid,dtype,transformer,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
+                cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
                 for row in cursor.fetchall():
-                    column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6]]
+                    column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
 
         if report_type == DAILY_REPORT:
             #for daily report, the minimum time unit of report_start and report_end is day; if it is not, set hour,minute,second and microsecond to 0
@@ -977,9 +990,56 @@ def run():
         #the following line resets the dataset the test dataset for testing
         datasets = [("2022020811","2022020811.nginx.access.csv"),("2023010114","2023010114.nginx.access.csv")]
         
+        no_data = False
         #sort the report_conditions
         if report_conditions:
             report_conditions.sort()
+            #try to map the value to internal value used by dataset
+            #Append a member to each cond to indicate the mapping status: if the member is False, value is mapped or no need to map; value is True or the indexes of the data which need to be mapped.
+            for cond in report_conditions:
+                #each condition is a tuple(column, operator, value), value is dependent on operator and column type
+                col = column_map[cond[0]]
+                col_type = col[DRIVER_DTYPE]
+
+                #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                #map the value to internal value used by dataset
+                cond[2] = cond[2].strip() if cond[2] else cond[2]
+                if cond[2].startswith('[') and cond[2].endswith(']'):
+                    cond[2] = json.loads(cond[2])
+                cond.append(False)
+                if isinstance(cond[2],list):
+                    for i in range(len(cond[2])):
+                        if col[DRIVER_TRANSFORMER]:
+                            #need transformation
+                            if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
+                                #is enum type
+                                cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+                                if not cond[2]:
+                                    #searching value doesn't exist, try to map it in executor
+                                    if cond[3] is False:
+                                        cond[3] = [i]
+                                    else:
+                                        cond[3].append(i)
+                            else:
+                                if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
+                                    cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
+                                else:
+                                    cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+                else:
+                    if col[DRIVER_TRANSFORMER]:
+                        #need transformation
+                        if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
+                            #is enum type
+                            cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+                            if not cond[2]:
+                                #searching value doesn't exist, try to map it in executor
+                                cond[3] = True
+                        else:
+                            if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
+                                cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
+                            else:
+                                cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+
 
         #if reportset contains a column '__all__', means this report will return acess log details, ignore other reportset columns
         #if 'count' is in reportset, change the column to * and also check whether reportset has multiple count column
@@ -1022,20 +1082,34 @@ def run():
             reportset.sort()
             for i in range(len(reportset)):
                 item = reportset[i]
+                if not item[2]:
+                    item[2] = item[0]
                 if item[1] == "count":
                     count_column_index = i
                 elif not item[1]:
                     raise Exception("Missing aggregation method on column({1}) for report({0})".format(reportid,item[0]))
                 else:
                     col = column_map[item[0]]
-                    if not col[3]:
+                    if not col[DRIVER_STATISTICAL]:
                         raise Exception("Can't apply aggregation method on non-statistical column({1}) for report({0})".format(reportid,item[0]))
                     if report_group_by and item[0] in report_group_by:
                         raise Exception("Can't apply aggregation method on group-by column({1}) for report({0})".format(reportid,item[0]))
-            if not report_group_by:
+
+            if report_group_by:
+                for item in report_group_by:
+                    if item not in column_map:
+                        raise Exception("The group-by column({1}) does not exist for report({0})".format(reportid,item))
+                    if not column_map[item][DRIVER_GROUPABLE]:
+                        raise Exception("The group-by column({1}) is not groupable for report({0})".format(reportid,item))
+            else:
                 #group_by is not enabled, all report data are statistical data,and only contains one row,
                 #report sort by is useless
                 report_sort_by = None
+
+            if report_sort_by:
+                for item in report_sort_by:
+                    if item[0] not in column_map:
+                        raise Exception("The sort-by column({1}) does not exist for report({0})".format(reportid,item[0]))
 
         spark = get_spark_session()
         rdd = spark.sparkContext.parallelize(datasets, len(datasets))
@@ -1068,29 +1142,42 @@ def run():
         else:
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}.csv".format(reportid))
             if report_group_by:
-                if report_type == HOURLY:
+                if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, no need to reduce
                     #a new column is added to the group_by
                     report_result = rdd.collect()
-                    report_group_by.insert(0,"request_time")
-                elif report_type == DAILY:
+                    report_group_by.insert(0,"__request_time__")
+                    if report_sort_by:
+                        report_sort_by = [[report_sort_by,True]]
+                    else:
+                        report_sort_by.insert(0,("__request_time__",True))
+
+                elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #a new column is added to the group_by
-                    report_group_by.insert(0,"request_time")
+                    report_group_by.insert(0,"__request_time__")
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    if report_sort_by:
+                        report_sort_by = [[report_sort_by,True]]
+                    else:
+                        report_sort_by.insert(0,("__request_time__",True))
                 else:
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
             else:
-                if report_type == HOURLY:
+                if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, no need to reduce
                     #a new column is added to reportset
-                    reportset.insert(0,("request_time",None,"request_time"))
+                    reportset.insert(0,("__request_time__",None,"request_time"))
                     report_result = rdd.collect()
-                elif report_type == DAILY:
+                elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #the result is a map between day and value
                     #a new column is added to the group_by
-                    reprt_group_by = ["request_time"]
+                    report_group_by = ["__request_time__"]
+                    if report_sort_by:
+                        report_sort_by = [[report_sort_by,True]]
+                    else:
+                        report_sort_by.insert(0,("__request_time__",True))
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
                 else:
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
@@ -1117,7 +1204,7 @@ def run():
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
-                    writer.writerow([ itertoos.chain(report_group_by,c[2] or c[0] for c in reportset]))
+                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertoos.chain(report_group_by,reportset)])
                 else:
                     writer.writerow([ c[2] or c[0] for c in reportset])
                 #write rows
@@ -1131,9 +1218,9 @@ def run():
                     enum_colids = None
                     for i in range(len(report_group_by)):
                         item = report_group_by[i]
-                        if item == "request_time":
+                        if item == "__request_time__":
                             continue
-                        colid = column_map[s][0]  if column_map[item][2] and datatransformer.is_enum_func(column_map[item][2]) else None
+                        colid = column_map[item][0]  if column_map[item][2] and datatransformer.is_enum_func(column_map[item][2]) else None
                         if colid is not None:
                             if not enum_colids:
                                 enum_colids = [None] * len(report_group_by)
