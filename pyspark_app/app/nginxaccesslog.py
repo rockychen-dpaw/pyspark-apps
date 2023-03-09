@@ -690,95 +690,101 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
             if report_group_by :
                 #'group by' enabled
                 #create pandas dataframe
-                df_datas = collections.OrderedDict()
-                if report_type == HOURLY_REPORT:
-                    df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
-                elif report_type == DAILY_REPORT:
-                    df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
-
-                for item in itertools.chain(report_group_by,reportset):
-                    colname = item[0] if isinstance(item,list) else item
-                    if colname == "*":
-                        continue
-                    col = column_map[colname]
-                    col_type = col[EXECUTOR_DTYPE]
-                    try:
-                        buff = data_buffers.pop(id(item))
-                        buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
-                        column_data = buff[1]
-                    except KeyError as ex:
-                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
-                        
-                    index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                    if filtered_rows == dataset_size:
-                        #all records are satisfied with the report condition
-                        df_datas[colname] = column_data
-                    else:
-                        df_datas[colname] = column_data[cond_result]
-
-                #create pandas dataframe
-                df = pd.DataFrame(df_data)
-                #get the group object
-                if report_type:
-                    df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
-                else:
-                    df_group = df.groupby(report_group_by,group_keys=True)
-                #perfrom the statistics on group
-                #populate the statistics map
-                statics_map = collections.OrderedDict()
-                previous_item = None
-                for item in reportset:
-                    col = column_map[item[0]]
-                    if not previous_item or previous_item[0] != item[0]:
-                        statics_map[item[0]] = [operation.get_agg_func(item[1])]
-                        previous_item = item
-                    else:
-                        statics_map[item[0]].append(operation.get_agg_func(item[1]))
-                df_result = df_group.agg(statics_map)
-                return dict(zip(df_result.index,df_result.values))
-            else:
-               #no 'group by', return the statistics data.
                 if filtered_rows == 0:
-                    #no cond_result 
-                    return [[None for item in reportset]]
-
-                previous_item = None
-                if report_type == HOURLY_REPORT:
-                    report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
+                    result = []
                 else:
-                    report_data = []
-                for item in reportset:
-                    if not previous_item or previous_item[0] != item[0]:
-                        #new column should be loaded
-                        previous_item = item
-                        if item[0] != "*":
-                            col = column_map[item[0]]
-                            col_type = col[EXECUTOR_DTYPE]
-                            try:
-                                buff = data_buffers.pop(id(item))
-                                buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
-                                column_data = buff[1]
-                            except KeyError as ex:
-                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
-                        
-                            index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-
-                    if item[0] == "*":
-                        #this operator applied on any colunn, only support count
-                        if item[1] != 'count':
-                            raise Exception("Only operator 'count' can operate on any column")
-                        report_data.append(np.count_nonzero(filtered_rows))
-                    elif filtered_rows == dataset_size:
-                        report_data.append(operation.get_func(col[2],item[1])(column_data))
+                    df_datas = collections.OrderedDict()
+                    if report_type == HOURLY_REPORT:
+                        df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
+                    elif report_type == DAILY_REPORT:
+                        df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
+    
+                    for item in itertools.chain(report_group_by,reportset):
+                        colname = item[0] if isinstance(item,(list,tuple)) else item
+                        if colname == "*":
+                            continue
+                        col = column_map[colname]
+                        col_type = col[EXECUTOR_DTYPE]
+                        try:
+                            buff = data_buffers.pop(id(item))
+                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
+                            column_data = buff[1]
+                        except KeyError as ex:
+                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
+                            
+                        index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                        if filtered_rows == dataset_size:
+                            #all records are satisfied with the report condition
+                            df_datas[colname] = column_data
+                        else:
+                            df_datas[colname] = column_data[cond_result]
+    
+                    #create pandas dataframe
+                    df = pd.DataFrame(df_datas)
+                    #get the group object
+                    if report_type:
+                        df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
                     else:
-                        report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
-                logger.debug("dataset={},reportset={},report_data={}".format(data[1],reportset,report_data))
+                        df_group = df.groupby(report_group_by,group_keys=True)
+                    #perfrom the statistics on group
+                    #populate the statistics map
+                    statics_map = collections.OrderedDict()
+                    for item in reportset:
+                        if item[0] == "*":
+                            #use the first group by column to calculate the count
+                            colname = report_group_by[0]
+                        else:
+                            colname = item[0]
+                        if colname in statics_map:
+                            statics_map[colname].append(operation.get_agg_func(item[1]))
+                        else:
+                            statics_map[colname] = [operation.get_agg_func(item[1])]
+                    df_result = df_group.agg(statics_map)
+
+                    result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
+            else:
+                #no 'group by', return the statistics data.
+                if filtered_rows == 0:
+                    report_data = [0] * len(reportset)
+                    if report_type == HOURLY_REPORT:
+                        report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
+                else:
+                    if report_type == HOURLY_REPORT:
+                        report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
+                    else:
+                        report_data = []
+                    previous_item = None
+                    for item in reportset:
+                        if not previous_item or previous_item[0] != item[0]:
+                            #new column should be loaded
+                            previous_item = item
+                            if item[0] != "*":
+                                col = column_map[item[0]]
+                                col_type = col[EXECUTOR_DTYPE]
+                                try:
+                                    buff = data_buffers.pop(id(item))
+                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
+                                    column_data = buff[1]
+                                except KeyError as ex:
+                                    column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
+                            
+                                index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+    
+                        if item[0] == "*":
+                            report_data.append(filtered_rows)
+                        elif filtered_rows == dataset_size:
+                            report_data.append(operation.get_func(col[2],item[1])(column_data))
+                        else:
+                            report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
 
                 if report_type == DAILY_REPORT:
                     #return a dict to perform the function 'reducebykey'
-                    return {dataset_time.strftime("%Y-%m-%d 00:00:00"):report_data}
+                    result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
                 else:
-                    return [report_data]
+                    result = [report_data]
+                    
+            #logger.debug("Return the result from executor.reportid={0}, access log file={0}, result={2}".format(reportid,data[1],result))
+            return result
     return analysis
 
 DRIVER_COLUMNID=0
@@ -830,13 +836,15 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
     
     for item in report_sort_by:
         try:
+            i = report_group_by.index(item[0])
             if item[0] == "__request_time__":
+                #default sort order for __request_time__ is asc.
                 sort_indexes.append((i,None,True))
                 continue
+            col = column_map[item[0]]
                 
-            i = report_group_by.index(item[0])
             #sort by the enum key only if the column is a enum type but not a enum group type
-            colid = column_map[item][DRIVER_COLUMNID]  if column_map[item][DRIVER_TRANSFORMER] and datatransformer.is_enum_func(column_map[item][DRIVER_TRANSFORMER]) and not datatransformer.is_group_func(column_map[item][DRIVER_TRANSFORMER]) else None
+            colid = col[DRIVER_COLUMNID]  if col[DRIVER_TRANSFORMER] and datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]) and not datatransformer.is_group_func(col[DRIVER_TRANSFORMER]) else None
             sort_indexes.append((i,colid,True if colid else item[1]))
         except ValueError as ex:
             #not in group by columns
@@ -844,6 +852,8 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
                 if reportset[i][2] == item:
                     sort_indexes.append((i,item[1]))
                     break
+        except:
+            pass
 
     if len(sort_indexes) == 1:
         #for single sort column, flat the indexes
@@ -851,14 +861,23 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
 
     def _sort_with_single_key_column(data):
         #use one of the group by column to sort
+        #group by keys can be string or a list or tuple
+        if sort_indexes[0] == 0:
+            if isinstance(data[0],(list,tuple)):
+                sort_val = data[0][0]
+            else:
+                sort_val = data[0]
+        else:
+            sort_val = data[0][sort_indexes[0]]
+
         if sort_indexes[1]:
-            return datatransformer.get_enum_key(data[0][sort_indexes[0]],databaseurl=databaseurl,columnid=sort_indexes[1])
+            return datatransformer.get_enum_key(sort_val,databaseurl=databaseurl,columnid=sort_indexes[1])
         elif sort_indexes[2]:
             #use the value to sort, asc
-            return data[0][sort_indexes[0]]
+            return sort_val
         else:
             #use the value to sort, desc
-            return data[0][sort_indexes[0]] * -1
+            return sort_val * -1
 
     def _sort_with_single_value_column(data):
         #use the one of the value column to sort
@@ -869,16 +888,25 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
         pos = 0
         for item in sort_indexes:
             if len(item) == 3:
-                #a  group by column
+                #a group by column
+                #group by keys can be string or a list or tuple
+                if item[0] == 0:
+                    if isinstance(data[0],(list,tuple)):
+                        sort_val = data[0][0]
+                    else:
+                        sort_val = data[0]
+                else:
+                    sort_val = data[0][item[0]]
+
                 if item[1]:
                     #use the key to sort
-                    result[pos] = datatransformer.get_enum_key(data[0][item[0]],databaseurl=databaseurl,columnid=item[1])
+                    result[pos] = datatransformer.get_enum_key(sort_val,databaseurl=databaseurl,columnid=item[1])
                 elif item[2]:
                     #use the value to sort ,asc
-                    result[pos] = data[0][item[0]]
+                    result[pos] = sort_val
                 else:
                     #use the value to sort ,desc
-                    result[pos] = data[0][item[0]] * -1
+                    result[pos] = sort_val * -1
             elif item[1]: 
                 #a  data column, asc
                 result[pos] = data[1][item]
@@ -896,18 +924,30 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
     else:
         return _sort_with_single_value_column
 
+def _group_by_key_iterator(keys):
+    """
+    return an iterator of group keys, (group keys can be a list or a single string
+    """
+    if isinstance(keys,(list,tuple)):
+        for k in keys:
+            yield k
+    else:
+        yield keys
+
 def _group_by_data_iterator(keys,databaseurl,enum_colids):
     """
     A iterator to convert the enum value to enum key if required
     The transformation is only happened for group by columns
     """
-    for i in  len(keys):
+    i = 0
+    for k in keys:
         if enum_colids[i]:
-            return datatransformer.get_enum_key(keys[i],databaseurl=databaseurl,columnid=enum_colids[i])
+            yield datatransformer.get_enum_key(k,databaseurl=databaseurl,columnid=enum_colids[i])
         else:
-            yield keys[i]
+            yield k
+        i += 1
 
-def group_by_report_iterator(report_result,databaseurl,enum_colids):
+def group_by_raw_report_iterator(report_result,databaseurl,enum_colids):
     """
     Return a iterator to iterate the group by report_result as a list data which contain the group by column data and value data, also convert the gorup by column data from enumid to enum key if required.
     params:
@@ -917,12 +957,104 @@ def group_by_report_iterator(report_result,databaseurl,enum_colids):
     if enum_colids:
         #converting the enum id to enum key is required
         for k,v in report_result:
-            yield itertools.chain(_group_by_data_iterator(k,databaseurl,enum_colids),v)
+            yield itertools.chain(_group_by_data_iterator(_group_by_key_iterator(k),databaseurl,enum_colids),v)
     else:
         #converting the enum id to enum key is not required
         for k,v in report_result:
-            yield itertools.chain(k,v)
+            yield itertools.chain(_group_by_key_iterator(k),v)
 
+def reportsetrow_iterator(row,original_reportset):
+    """
+    Return a iterator to iterate the raw reportset to generate a list data for report
+    params:
+        report_result: a iterator of tuple(keys, values)
+    """
+    #converting the enum id to enum key is not required
+    for c in original_reportset:
+        yield c[3](row)
+
+def group_by_report_iterator(report_result,databaseurl,enum_colids,original_reportset):
+    """
+    Return a iterator to iterate the group by raw report_result to generate a list data for report
+    params:
+        report_result: a iterator of tuple(keys, values)
+        enum_colids: a list with len(report_group_by) or len(keys), the corresponding memeber is column id if the related column need to convert into keys; otherwise the 
+    """
+    if enum_colids:
+        #converting the enum id to enum key is required
+        for k,v in report_result:
+            yield itertools.chain(_group_by_data_iterator(_group_by_key_iterator(k),databaseurl,enum_colids),reportsetrow_iterator(v,original_reportset))
+    else:
+        #converting the enum id to enum key is not required
+        for k,v in report_result:
+            yield itertools.chain(_group_by_key_iterator(k),reportsetrow_iterator(v,original_reportset))
+
+def reportset_iterator(report_result,original_reportset):
+    """
+    Return a iterator to iterate the raw reportset to generate a list data for report
+    params:
+        report_result: a iterator of tuple(keys, values)
+    """
+    #converting the enum id to enum key is not required
+    for v in report_result:
+        yield reportsetrow_iterator(v,original_reportset)
+
+def get_report_data_factory(pos):
+    """
+    Return a method to get the column data from report data
+    """
+    def _func(row):
+        return row[pos]
+
+    return _func
+
+def get_report_avg_factory(reportset,item):
+    """
+    Return a method to get the column avg from report data
+    """
+    count_pos = next(i for i in range(len(reportset)) if reportset[i][1] == "count")
+    sum_pos = next(i for i in range(len(reportset)) if reportset[i][1] == "sum" and reportset[i][0] == item[0])
+
+    def _func(row):
+        if row[count_pos] <= 0:
+            return 0
+        else:
+            return row[sum_pos] / row[count_pos]
+
+    return _func
+
+def get_column_data_4_sortby_factory(f_get_column_data,sort_type):
+
+    def _func(data):
+        if sort_type:
+            return f_get_column_data(data[1])
+        else:
+            return -1 * f_get_column_data(data[1])
+
+    return _func
+
+def get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,columnid,sort_type):
+    def _func1(data):
+        """
+        For single group-by column.
+        the key data is not a list type
+        """
+        if columnid is None:
+            return data[0]
+        else:
+            return datatransformer.get_enum_key(data[0],databaseurl=databaseurl,columnid=columnid)
+
+    def _func2(data):
+        """
+        For multiple group-by columns.
+        the key data is a list type
+        """
+        if columnid is None:
+            return data[0][pos]
+        else:
+            return datatransformer.get_enum_key(data[0][pos],databaseurl=databaseurl,columnid=columnid)
+
+    return _func1 if len(report_group_by) == 1 else _func2
 
 def run():
     """
@@ -948,6 +1080,10 @@ def run():
                 if report is None:
                     raise Exception("Report({}) doesn't exist.".format(reportid))
                 report_name,datasetid,report_start,report_end,report_type,report_conditions,report_group_by,report_sort_by,reportset = report
+                if report_sort_by:
+                    #convert the sort type from string to bool
+                    for item in report_sort_by:
+                        item[1] = True if item[1] == "T" else False
     
                 cursor.execute("select name,datasetinfo from datascience_dataset where id = {}".format(datasetid))
                 dataset = cursor.fetchone()
@@ -1018,6 +1154,7 @@ def run():
                                     #searching value doesn't exist, try to map it in executor
                                     if cond[3] is False:
                                         cond[3] = [i]
+                                        logger.debug("The value({2}) condition({1}) of report({0}) is not resolved in drvier, let executor try again".format(reportid,cond,cond[2][i]))
                                     else:
                                         cond[3].append(i)
                             else:
@@ -1025,6 +1162,10 @@ def run():
                                     cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
                                 else:
                                     cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+                        elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
+                            #encode the string value
+                            cond[2][i] = (cond[2][i] or "").encode()
+
                 else:
                     if col[DRIVER_TRANSFORMER]:
                         #need transformation
@@ -1034,38 +1175,100 @@ def run():
                             if not cond[2]:
                                 #searching value doesn't exist, try to map it in executor
                                 cond[3] = True
+                                logger.debug("The value({2}) condition({1}) of report({0}) is not resolved in drvier, let executor try again".format(reportid,cond,cond[2]))
                         else:
                             if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
                                 cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
                             else:
                                 cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
+                    elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
+                        #encode the string value
+                        cond[2]= (cond[2] or "").encode()
 
 
         #if reportset contains a column '__all__', means this report will return acess log details, ignore other reportset columns
         #if 'count' is in reportset, change the column to * and also check whether reportset has multiple count column
         if not reportset:
             reportset = "__details__"
+            original_reportset = None
         else:
-            count_column_index = False
-            count_added = False
+            count_column = None
+            count_column_required = False
             found_avg = False
-            for item in reportset:
-                if item[1] == "count":
-                    if count_column_index:
-                        raise Exception("Have multiple column 'count' in report set for report({})".format(reportid))
-                    else:
-                        item[0] = "*"
-                        count_column_index = True
+            found_sum = False
+            previous_item = None
+            #backup the original reportset, deep clone
+            original_reportset = [[c[0],c[1],c[2] if c[2] else ("{}-{}".format(c[0],c[1]) if c[1] else c[0])] for c in reportset]
+            reportset.sort()
+            for i in range(len(reportset) - 1,-1,-1):
+                item = reportset[i]
+                if previous_item and previous_item[0] != item[0]:
+                    #new column
+                    if found_avg and not found_sum:
+                        #found column 'avg', but not found column 'sum',add a column 'sum'
+                        reportset.insert(i + 1,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
+                    found_avg = False
+                    found_sum = False
+                if previous_item and previous_item[0] == item[0] and previous_item[1] == item[1]:
+                    #this is a duplicate statistical column, delete it
+                    del reportset[i]
+                    continue
+
+                #always use set previous_item to item to check whether the current column is the duplicate statistical column
+                previous_item = item
+
+                if not item[1]:
+                    raise Exception("Missing aggregation method on column({1}) for report({0})".format(reportid,item[0]))
+                elif item[1] == "count":
+                    #remove all count columns from reportset first, and add it later. 
+                    if not count_column:
+                        count_column = item
+                        if not count_column[2]:
+                            count_column[2] = "count"
+                        count_column[0] = "*"
+                    del reportset[i]
                     continue
                 elif item[1] == "avg" :
                     #perform a avg on a list of avg data is incorrect, because each access log file has different records.
-                    #so change the operator 'avg' to 'avg_sum' to perform an operator 'sum' instead; and also add a 'count' column if doesn't exist.
+                    #so avg is always calcuated through summary and count
+                    #delete the column 'avg' and will add a column 'sum' if required
                     found_avg = True
-                    item[1] == "avg_sum"
+                    count_column_required = True
+                    del reportset[i]
+                elif item[1] == "sum" :
+                    found_sum = True
                 elif item[0] == "__all__" :
                     #a  detail log report can't contain any statistics data.
                     reportset = "__details__"
                     break
+
+                #use a standard column name for internal processing
+                item[2] = "{}_{}".format(item[0],item[1])
+                    
+                col = column_map[item[0]]
+                if not col[DRIVER_STATISTICAL]:
+                    raise Exception("Can't apply aggregation method on non-statistical column({1}) for report({0})".format(reportid,item[0]))
+                if report_group_by and item[0] in report_group_by:
+                    raise Exception("Can't apply aggregation method on group-by column({1}) for report({0})".format(reportid,item[0]))
+            
+            if reportset == "__details__":
+                if found_avg and not found_sum:
+                    #found column 'avg', but not found column 'sum',add a column 'sum'
+                    reportset.insert(0,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
+                reportset.sort()
+                count_column_index = -1
+                if count_column:
+                    #add the column 'count' back to reportset
+                    #use the first data column in reportset as the data column of count_column
+                    count_column[0] = "*"
+                    reportset.insert(0,count_column)
+                    count_column_index = 0
+                elif count_column_required:
+                    #at least have one avg column, add a count column to implment avg feature
+                    #column 'count' not found, add one
+                    count_column = ["*","count","count"]
+                    reportset.insert(0,count_column)
+                    count_column_index = 0
 
         if reportset == "__details__":
             #this report will return all log details, report_group_by is meanless
@@ -1073,27 +1276,18 @@ def run():
             report_sort_by = None
             report_type = None
         else:
-            if found_avg:
-                #group_by is enabled, add a count if it doesn't exist
-                if not count_column_index:
-                    reportset.insert(0,["*","count","__count__"])
-                    count_added = True
-
             reportset.sort()
-            for i in range(len(reportset)):
-                item = reportset[i]
-                if not item[2]:
-                    item[2] = item[0]
-                if item[1] == "count":
-                    count_column_index = i
-                elif not item[1]:
-                    raise Exception("Missing aggregation method on column({1}) for report({0})".format(reportid,item[0]))
-                else:
-                    col = column_map[item[0]]
-                    if not col[DRIVER_STATISTICAL]:
-                        raise Exception("Can't apply aggregation method on non-statistical column({1}) for report({0})".format(reportid,item[0]))
-                    if report_group_by and item[0] in report_group_by:
-                        raise Exception("Can't apply aggregation method on group-by column({1}) for report({0})".format(reportid,item[0]))
+            if count_column:
+                #add the column 'count' back to reportset
+                #use the first data column in reportset as the data column of count_column
+                count_column[0] = "*"
+                reportset.insert(0,count_column)
+            elif found_avg:
+                #at least have one avg column, add a count column to implment avg feature
+                if count_column_index == -1:
+                    #column 'count' not found, add one
+                    count_column = ["*","count",None]
+                    reportset.insert(0,count_column)
 
             if report_group_by:
                 for item in report_group_by:
@@ -1106,14 +1300,10 @@ def run():
                 #report sort by is useless
                 report_sort_by = None
 
-            if report_sort_by:
-                for item in report_sort_by:
-                    if item[0] not in column_map:
-                        raise Exception("The sort-by column({1}) does not exist for report({0})".format(reportid,item[0]))
-
         spark = get_spark_session()
         rdd = spark.sparkContext.parallelize(datasets, len(datasets))
         #perform the analysis per nginx access log file
+        logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},reportset={4},report_type={5}".format(reportid,report_conditions,report_group_by,report_sort_by,reportset,report_type))
         rdd = rdd.flatMap(analysis_factory(reportid,databaseurl,datasetid,dataset_info,report_start,report_end,report_conditions,report_group_by,reportset,report_type))
 
         #init the folder to place the report file
@@ -1140,6 +1330,7 @@ def run():
             logger.debug("report file = {}".format(report_file))
             return report_file
         else:
+            report_raw_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}-raw.csv".format(reportid))
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}.csv".format(reportid))
             if report_group_by:
                 if report_type == HOURLY_REPORT:
@@ -1148,89 +1339,132 @@ def run():
                     report_result = rdd.collect()
                     report_group_by.insert(0,"__request_time__")
                     if report_sort_by:
-                        report_sort_by = [[report_sort_by,True]]
+                        report_sort_by.insert(0,["__request_time__",True])
                     else:
-                        report_sort_by.insert(0,("__request_time__",True))
+                        report_sort_by = [["__request_time__",True]]
 
                 elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #a new column is added to the group_by
-                    report_group_by.insert(0,"__request_time__")
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_group_by.insert(0,"__request_time__")
                     if report_sort_by:
-                        report_sort_by = [[report_sort_by,True]]
+                        report_sort_by.insert(0,["__request_time__",True])
                     else:
-                        report_sort_by.insert(0,("__request_time__",True))
+                        report_sort_by = [["__request_time__",True]]
                 else:
                     report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
             else:
                 if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, no need to reduce
                     #a new column is added to reportset
-                    reportset.insert(0,("__request_time__",None,"request_time"))
                     report_result = rdd.collect()
+                    reportset.insert(0,["__request_time__",None,"request_time"])
+                    original_reportset.insert(0,["__request_time__",None,"request_time"])
+                    #add a column 'request_time', adjust the value of count_column_index
                 elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #the result is a map between day and value
                     #a new column is added to the group_by
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
                     report_group_by = ["__request_time__"]
-                    if report_sort_by:
-                        report_sort_by = [[report_sort_by,True]]
-                    else:
-                        report_sort_by.insert(0,("__request_time__",True))
-                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_sort_by = [["__request_time__",True]]
                 else:
-                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_result = [rdd.reduce(merge_reportresult_factory(reportset))]
 
-            #calcuate the avg and remove count column if it is added for avg
-            if found_avg:
-                for row in report_result.values() if report_group_by else report_result:
-                    i = 0
-                    while i < len(reportset):
+            #find the logic to get the report row data from report raw row data
+            for item in original_reportset:
+                if item[1] == "avg":
+                    item.append(get_report_avg_factory(reportset,item))
+                elif item[1] == "count":
+                    item.append(get_report_data_factory(next(i for i in range(len(reportset)) if reportset[i][1] == "count" )))
+                else:
+                    item.append(get_report_data_factory(next(i for i in range(len(reportset)) if reportset[i][0] == item[0] and reportset[i][1] == item[1] )))
+
+            if report_group_by:
+                #find the column ids for columns which will be converted from int value to enum key
+                enum_colids = None
+                for i in range(len(report_group_by)):
+                    item = report_group_by[i]
+                    if item == "__request_time__":
+                        continue
+                    colid = column_map[item][DRIVER_COLUMNID]  if column_map[item][DRIVER_TRANSFORMER] and datatransformer.is_enum_func(column_map[item][DRIVER_TRANSFORMER]) else None
+                    if colid is not None:
+                        if not enum_colids:
+                            enum_colids = [None] * len(report_group_by)
+                        enum_colids[i] = colid
+                #sort the data if required
+                if report_sort_by:
+                    logger.debug("Before sort by = {},report_group_by={}".format(report_sort_by,report_group_by))
+                    for i in range(len(report_sort_by) - 1,-1,-1): 
+                        item = report_sort_by[i]
                         try:
-                            if reportset[i][1] == "avg_sum":
-                                row[i] = row[i] / row[count_column_index]
-                        finally:
-                            i += 1
-                    if count_added:
-                        #added for avg
-                        del row[count_column_index]
+                            #sort-by column is a group-by column
+                            pos = report_group_by.index(item[0])
+                            if item[0] == "__request_time__":
+                                item.append(get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,None,item[1]))
+                            else:
+                                col = column_map[item[0]]
+                                if enum_colids and enum_colids[pos] and not datatransformer.is_group_func(col[DRIVER_TRANSFORMER]):
+                                    item.append(get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,enum_colids[pos],item[1]))
+                                else:
+                                    item.append(get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,None,item[1]))
+                            
+                        except ValueError as ex:
+                            #sort-by column is a reportset column
+                            pos = next((i for i in range(len(original_reportset)) if original_reportset[i][2] == item[0] ),-1)
+                            if pos == -1:
+                                #invalid sorg-by column
+                                del report_sort_by[i]
+                            else:
+                                item.append(get_column_data_4_sortby_factory(original_reportset[pos][3],item[1]))
 
-                if count_added:
-                    del reportset[count_added]
+                    logger.debug("sort by = {}".format(report_sort_by))
 
-            #save the data to file and also convert the enumeration data back to string
-            with open(report_file, 'w', newline='') as f:
+                    if report_sort_by:
+                        if len(report_sort_by) == 1:
+                            report_result = sorted(report_result,key=report_sort_by[0][2])
+                        else:
+                            report_result = sorted(report_result,key=lambda data:[ item[2](data) for item in report_sort_by])
+
+            else:
+                if report_type:
+                    #sort by request_time
+                    report_result.sort(key=lambda d:d[0])
+
+
+            #save the report raw data to file and also convert the enumeration data back to string
+            with open(report_raw_file, 'w', newline='') as f:
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
-                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertoos.chain(report_group_by,reportset)])
+                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in reportset])])
                 else:
                     writer.writerow([ c[2] or c[0] for c in reportset])
                 #write rows
                 if report_group_by:
-                    #sort the data
-                    if report_sort_by:
-                        report_result = sorted(report_result.items(),key=sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportset,report_sort_by))
-                    else:
-                        report_result = report_result.items()
-                    #find the column ids for columns whose will be converted from int value to enum key
-                    enum_colids = None
-                    for i in range(len(report_group_by)):
-                        item = report_group_by[i]
-                        if item == "__request_time__":
-                            continue
-                        colid = column_map[item][0]  if column_map[item][2] and datatransformer.is_enum_func(column_map[item][2]) else None
-                        if colid is not None:
-                            if not enum_colids:
-                                enum_colids = [None] * len(report_group_by)
-                            enum_colids[i] = colid
-
                     #save the data
-                    writer.writerows(group_by_report_iterator(report_result,databaseurl,enum_colids))
+                    writer.writerows(group_by_raw_report_iterator(report_result,databaseurl,enum_colids))
                 else:
                     #group_by is not enabled, all report data are statistical data
                     writer.writerows(report_result)
+ 
+            #save the report to file and also convert the enumeration data back to string
+            with open(report_file, 'w', newline='') as f:
+                writer = csv.writer(f)
+                #writer header
+                if report_group_by:
+                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in original_reportset])])
+                else:
+                    writer.writerow([ c[2] or c[0] for c in original_reportset])
+                #write rows
+                if report_group_by:
+                    #save the data
+                    writer.writerows(group_by_report_iterator(report_result,databaseurl,enum_colids,original_reportset))
+                else:
+                    #group_by is not enabled, all report data are statistical data
+                    writer.writerows(reportset_iterator(report_result,original_reportset))
+
 
         """
         with database.Database(databaseurl).get_conn(True) as conn:

@@ -1,6 +1,9 @@
 import numpy  as np
+import logging
 
 from ..datatransformer import is_number_type,get_np_type,is_string_type
+
+logger = logging.getLogger(__name__)
 
 def _number_in(l,vals):
     result = None
@@ -16,9 +19,9 @@ def _string_in(l,vals):
     result = None
     for val in vals:
         if result is None:
-            result = np.equal(l,(val or "").encode())
+            result = np.char.equal(l,val)
         else:
-            result |= np.equal(l,(val or "").encode())
+            result |= np.char.equal(l,val)
 
     return result
 
@@ -40,20 +43,21 @@ number_operator_map = {
 }
 
 string_operator_map = {
-    "==":lambda l,val:np.equal(l,(val or "").encode()),
-    "=":lambda l,val:np.equal(l,(val or "").encode()),
-    "!=":lambda l,val:np.equal(l,(val or "").encode()) == False,
-    "<>":lambda l,val:np.equal(l,(val or "").encode()) == False,
+    "==":lambda l,val:np.char.equal(l,val),
+    "=":lambda l,val:np.char.equal(l,val),
+    "!=":lambda l,val:np.char.equal(l,val) == False,
+    "<>":lambda l,val:np.char.equal(l,val) == False,
     "in":_string_in,
-    "contain":lambda l,val:np.core.defchararray.find(l,(val or "").encode())!=-1,
-    "not contain":lambda l,val:np.core.defchararray.find(l,(val or "").encode())==-1
+    "contain":lambda l,val:np.char.find(l,val)!=-1,
+    "not contain":lambda l,val:np.char.find(l,val)==-1,
+    "endswith":lambda l,val:np.char.endswith(l,val),
+    "startswith":lambda l,val:np.char.startswith(l,val)
 }
 
 agg_operator_map = {
     "min":"min",
     "max":"max",
     "sum":"sum",
-    "avg_sum":"sum",
     "count":"count"
 }
 
@@ -73,12 +77,15 @@ def _merge_avg(d1,d2):
     else:
         return [d1[0] + d2[0],d1[1] + d2[1]]
 
+def _merge_count(d1,d2):
+    logger.debug("{} + {} = {}".format(d1,d2,(d1+d2)))
+    return d1 + d2
+
 merge_operator_map = {
-    "count":lambda d1,d2: d1 + d2,
+    "count":_merge_count,#lambda d1,d2: int(d1 + d2),
     "min":lambda d1,d2: d1 if d1 <= d2 else d2,
     "max":lambda d1,d2: d1 if d1 >= d2 else d2,
-    "sum":lambda d1,d2: d2 + d2,
-    "avg_sum":lambda d1,d2: d2 + d2
+    "sum":lambda d1,d2: d1 + d2
 }
 
 def get_func(dtype,operator):
