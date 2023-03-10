@@ -663,6 +663,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
             if reportset == "__details__":
                 #return the detail logs
                 if filtered_rows == 0:
+                    logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
                     return [(data[0],data[1],0,None)]
                 elif filtered_rows == dataset_size:
                     #all logs are returned
@@ -740,6 +741,8 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         else:
                             statics_map[colname] = [operation.get_agg_func(item[1])]
                     df_result = df_group.agg(statics_map)
+
+                    logger.debug("columns = {}".format(df_result.columns))
 
                     result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
             else:
@@ -1150,7 +1153,7 @@ def run():
                             if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                 #is enum type
                                 cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
-                                if not cond[2]:
+                                if cond[2] is None:
                                     #searching value doesn't exist, try to map it in executor
                                     if cond[3] is False:
                                         cond[3] = [i]
@@ -1172,7 +1175,7 @@ def run():
                         if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                             #is enum type
                             cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[DRIVER_COLUMNID])
-                            if not cond[2]:
+                            if cond[2] is None:
                                 #searching value doesn't exist, try to map it in executor
                                 cond[3] = True
                                 logger.debug("The value({2}) condition({1}) of report({0}) is not resolved in drvier, let executor try again".format(reportid,cond,cond[2]))
@@ -1217,7 +1220,11 @@ def run():
                 #always use set previous_item to item to check whether the current column is the duplicate statistical column
                 previous_item = item
 
-                if not item[1]:
+                if item[0] == "__all__" :
+                    #a  detail log report can't contain any statistics data.
+                    reportset = "__details__"
+                    break
+                elif not item[1]:
                     raise Exception("Missing aggregation method on column({1}) for report({0})".format(reportid,item[0]))
                 elif item[1] == "count":
                     #remove all count columns from reportset first, and add it later. 
@@ -1237,10 +1244,6 @@ def run():
                     del reportset[i]
                 elif item[1] == "sum" :
                     found_sum = True
-                elif item[0] == "__all__" :
-                    #a  detail log report can't contain any statistics data.
-                    reportset = "__details__"
-                    break
 
                 #use a standard column name for internal processing
                 item[2] = "{}_{}".format(item[0],item[1])
@@ -1251,7 +1254,7 @@ def run():
                 if report_group_by and item[0] in report_group_by:
                     raise Exception("Can't apply aggregation method on group-by column({1}) for report({0})".format(reportid,item[0]))
             
-            if reportset == "__details__":
+            if reportset != "__details__":
                 if found_avg and not found_sum:
                     #found column 'avg', but not found column 'sum',add a column 'sum'
                     reportset.insert(0,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
@@ -1277,17 +1280,6 @@ def run():
             report_type = None
         else:
             reportset.sort()
-            if count_column:
-                #add the column 'count' back to reportset
-                #use the first data column in reportset as the data column of count_column
-                count_column[0] = "*"
-                reportset.insert(0,count_column)
-            elif found_avg:
-                #at least have one avg column, add a count column to implment avg feature
-                if count_column_index == -1:
-                    #column 'count' not found, add one
-                    count_column = ["*","count",None]
-                    reportset.insert(0,count_column)
 
             if report_group_by:
                 for item in report_group_by:
@@ -1312,21 +1304,37 @@ def run():
         utils.mkdir(report_file_folder)
         if reportset == "__details__":
             result = rdd.collect()
-            logger.debug("len = {}".format(len(result)))
-            logger.debug("result = " + str(result))
             result.sort()
+            if dataset_info.get("data_header"):
+                report_head_file = os.path.join(cache_dir,"nginxaccesslog-report_header.csv")
+                if not os.path.exists(report_head_file):
+                    #report_head_file does not exist, create it
+                    with open(report_head_file,'w') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(dataset_info.get("data_header"))
+            else:
+                report_head_file = None
+
             result = [r for r in result if r[3]]
             if len(result) == 0:
                 logger.debug("No data found")
                 return None
 
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}{}".format(reportid,os.path.splitext(result[0][3])[1]))
-            if len(result) == -1:
-                os.rename(result[0][3],report_file)
-            else:
-                utils.concat_files([r[3] for r in result],report_file)
+            if report_head_file:
+                #write the data header as report header
+                files = [r[3] for r in result]
+                files.insert(0,report_head_files)
+                utils.concat_files(files,report_file)
                 for r in result:
                     utils.remove_file(r[3])
+            else:
+                if len(result) == -1:
+                    os.rename(result[0][3],report_file)
+                else:
+                    utils.concat_files([r[3] for r in result],report_file)
+                    for r in result:
+                        utils.remove_file(r[3])
             logger.debug("report file = {}".format(report_file))
             return report_file
         else:
