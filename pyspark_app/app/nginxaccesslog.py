@@ -7,6 +7,7 @@ import itertools
 import collections
 import json
 import tempfile
+import base64
 from datetime import datetime,timedelta
 import csv 
 
@@ -46,15 +47,15 @@ def get_harvester(datasetinfo):
     harvester_config["name"]
     return harvester.get_harvester(harvester_config["name"],**harvester_config["parameters"])
 
-def filter_factory(filters,excludes):
+def filter_factory(includes,excludes):
     """
     Return a filter function to filter out the noisy data from nginx access log
     """
     def _exclude(val):
         return not excludes(val)
 
-    def _filters(val):
-        for f in filters:
+    def _includes(val):
+        for f in includes:
             if f(val):
                 return True
         return False
@@ -65,49 +66,49 @@ def filter_factory(filters,excludes):
                 return False
         return True
 
-    def _filters_and_excludes(val):
+    def _includes_and_excludes(val):
         for f in excludes:
             if f(val):
                 return False
 
-        for f in filters:
+        for f in includes:
             if f(val):
                 return True
 
         return False
 
     
-    if not filters and not excludes:
-        #no filters
+    if not includes and not excludes:
+        #no includes
         return None
-    elif filters and excludes:
-        #both filters and excludes are congigured
-        if not isinstance(filters,list):
-            filters = [filters]
+    elif includes and excludes:
+        #both includes and excludes are congigured
+        if not isinstance(includes,list):
+            includes = [includes]
         if not isinstance(excludes,list):
             excludes = [excludes]
 
-        for i in range(len(filters)):
-            filters[i] = eval(filters[i])
+        for i in range(len(includes)):
+            includes[i] = eval(includes[i])
 
         for i in range(len(excludes)):
             excludes[i] = eval(excludes[i])
 
-        return _filters_and_excludes
-    elif filters:
-        #only filters are configured
-        if isinstance(filters,list):
-            if len(filters) == 1:
-                filters = filters[0]
-                filters = eval(filters)
-                return filters
+        return _includes_and_excludes
+    elif includes:
+        #only includes are configured
+        if isinstance(includes,list):
+            if len(includes) == 1:
+                includes = includes[0]
+                includes = eval(includes)
+                return includes
             else:
-                for i in range(len(filters)):
-                    filters[i] = eval(filters[i])
-                return _filters
+                for i in range(len(includes)):
+                    includes[i] = eval(includes[i])
+                return _includes
         else:
-            filters = eval(filters)
-            return filters
+            includes = eval(includes)
+            return includes
     else:
         #only excludes are configured
         if isinstance(excludes,list):
@@ -123,7 +124,7 @@ def filter_factory(filters,excludes):
             excludes = eval(excludes)
             return _exclude
 
-def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,report_end,report_conditions,report_group_by,reportset,report_type):
+def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,report_end,report_conditions,report_group_by,resultset,report_type):
     """
     Return a function to analysis a single nginx access log file
     """
@@ -152,7 +153,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
         data_file = os.path.join(cache_folder,data[1])
         data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
 
-        #load the dataset column settings, a map between columnindex and a tuple(filters and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
+        #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
         allreportcolumns = {}
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
@@ -163,26 +164,26 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     if previous_columnindex is None or previous_columnindex != d[0]:
                         #new column index
                         if columns:
-                            #initialize the column's filters
+                            #initialize the column's includes
                             columns[0] = filter_factory(columns[0][0],columns[0][1])
                         if d[0] == -1:
                             #the end flag
                             break
 
                         previous_columnindex = d[0]
-                        columns = [[d[5].get("filter") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8])]]
+                        columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8])]]
                         allreportcolumns[d[0]] = columns
                     else:
                         columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8]))
                         if d[5]:
-                            if d[5].get("filter"):
+                            if d[5].get("include"):
                                 if columns[0][0]:
                                     if isinstance(columns[0][0],list):
-                                        columns[0][0].append(d[5].get("filter"))
+                                        columns[0][0].append(d[5].get("include"))
                                     else:
-                                        columns[0][0] = [columns[0][0],d[5].get("filter")]
+                                        columns[0][0] = [columns[0][0],d[5].get("include")]
                                 else:
-                                    columns[0][0] = d[5].get("filter")
+                                    columns[0][0] = d[5].get("include")
 
                             if d[5].get("exclude"):
                                 if columns[0][1]:
@@ -270,6 +271,16 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         context={
                             "dataset_time":dataset_time
                         }
+
+                        try:
+                            buffer_size = datasetinfo.get("indexbatchsize",10000)
+                        except:
+                            buffer_size = 10000
+                        try:
+                            databuffer_size = datasetinfo.get("databatchsize",1000)
+                        except:
+                            databuffer_size = 10000
+
                         if src_data_file:
                             #the local cached data file doesnot exist, 
                             #should generate the local cached data file by excluding the noisy data from original dataset.
@@ -286,99 +297,122 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
 
                         with h5py.File(tmp_index_file,'w') as tmp_h5:
-                            try:
-                                buffer_size = datasetinfo.get("indexbatchsize",10000)
-                            except:
-                                buffer_size = 10000
-                            try:
-                                databuffer_size = datasetinfo.get("databatchsize",1000)
-                            except:
-                                databuffer_size = 10000
 
-
-                            with open(src_data_file or data_file) as f:
-                                logreader = csv.reader(f)
-
-                                for item in logreader:
-                                    #check the filter first
-                                    if src_data_file:
-                                        #data are retrieved from source, should execute the filter logic
-                                        excluded = False
+                            reprocess_columns = None
+                            while True:
+                                indexbuff_baseindex = 0
+                                indexbuff_index = 0
+                                databuff_index = 0
+                                with open(src_data_file or data_file) as f:
+                                    logreader = csv.reader(f)
+    
+                                    for item in logreader:
+                                        #check the filter first
+                                        if src_data_file:
+                                            #data are retrieved from source, should execute the filter logic
+                                            excluded = False
+                                            for columnindex,reportcolumns in allreportcolumns.items():
+                                                value = item[columnindex]
+                                                excluded = False
+                                                if  reportcolumns[0] and not reportcolumns[0](value):
+                                                    #excluded
+                                                    excluded = True
+                                                    break
+                                            if excluded:
+                                                #record are excluded
+                                                excluded_rows += 1
+                                                continue
+                                            #data are retrieved from source,append the data to local data file
+                                            databuff[databuff_index] = item
+                                            databuff_index += 1
+                                            if databuff_index == databuffer_size:
+                                                #databuff is full, flush to file 
+                                                logwriter.writerows(databuff)
+                                                databuff_index = 0
+                                        
+                                        #generate the dataset for each index column
                                         for columnindex,reportcolumns in allreportcolumns.items():
                                             value = item[columnindex]
-                                            excluded = False
-                                            if  reportcolumns[0] and not reportcolumns[0](value):
-                                                #excluded
-                                                excluded = True
-                                                break
-                                        if excluded:
-                                            #record are excluded
-                                            excluded_rows += 1
-                                            continue
-                                        #data are retrieved from source,append the data to local data file
-                                        databuff[databuff_index] = item
-                                        databuff_index += 1
-                                        if databuff_index == databuff_size:
-                                            #databuff is full, flush to file 
-                                            logwriter.writerows(databuff)
-                                            databuff_index = 0
-                                    
-                                    #generate the dataset for each index column
-                                    for columnindex,reportcolumns in allreportcolumns.items():
-                                        value = item[columnindex]
-                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
-                                            if  not column_filterable and not column_groupable and not column_statistical:
-                                                #no need to create index 
-                                                continue
-                
-                                            #create the buffer and hdf5 dataset for column
-                                            if indexbuff_baseindex == 0 and indexbuff_index == 0:
-                                                indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
-                                                indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
-                
-                                            #get the index data for each index column
-                                            if column_transformer:
-                                                #data  transformation is required
-                                                if column_columninfo and column_columninfo.get("parameters"):
-                                                    indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,**column_columninfo["parameters"])
+                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                                if  not column_filterable and not column_groupable and not column_statistical:
+                                                    #no need to create index 
+                                                    continue
+                                                if reprocess_columns and column_name not in reprocess_columns:
+                                                    #this is not the first run, and this column no nedd to process again
+                                                    continue
+                    
+                                                #create the buffer and hdf5 dataset for column
+                                                if column_name not in indexdatasets:
+                                                    indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
+                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
+                    
+                                                #get the index data for each index column
+                                                if column_transformer:
+                                                    #data  transformation is required
+                                                    if column_columninfo and column_columninfo.get("parameters"):
+                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,row=item,columnname=column_name,**column_columninfo["parameters"])
+                                                    else:
+                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,row=item,columnname=column_name)
                                                 else:
-                                                    indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context)
-                                            else:
-                                                indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
-                
-                                            if indexbuff_index == buffer_size - 1:
-                                                #buff is full, write to hdf5 file
-                                                try:
-                                                    indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + buffer_size])
-                                                except Exception as ex:
-                                                    logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,buffer_size,str(ex)))
-                                                    raise
+                                                    indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
+                    
+                                                if indexbuff_index == buffer_size - 1:
+                                                    #buff is full, write to hdf5 file
+                                                    try:
+                                                        indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + buffer_size])
+                                                    except Exception as ex:
+                                                        logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,buffer_size,str(ex)))
+                                                        raise
+        
+                                                    lock.renew()
+                    
+                                        indexbuff_index += 1
+                                        if indexbuff_index == buffer_size:
+                                            #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
+                                            indexbuff_index = 0
+                                            indexbuff_baseindex += buffer_size
     
-                                                lock.renew()
-                
-                                    indexbuff_index += 1
-                                    if indexbuff_index == buffer_size:
-                                        #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
-                                        indexbuff_index = 0
-                                        indexbuff_baseindex += buffer_size
+                                if src_data_file:
+                                    if databuff_index > 0:
+                                        #still have some data in data buff, flush it to file
+                                        logwriter.writerows(databuff[:databuff_index])
 
-                            if databuff_index > 0:
-                                #still have some data in data buff, flush it to file
-                                logwriter.writerows(databuff[:databuff_index])
-                            
-                            #still have data in buff, write them to hdf5 file
-                            for columnindex,reportcolumns in allreportcolumns.items():
-                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
-                                    if  not column_filterable and not column_groupable and not column_statistical:
-                                        continue
-                
-                                    if indexbuff_index > 0:
-                                        indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
-                
-                            if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
-                                raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,data_index_file))
-                            else:
-                                logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
+                                    data_f.close()
+                                    #rename the tmp data file to data file if required
+                                    os.rename(tmp_data_file,data_file)
+
+                                    if not harvester.is_local():
+                                        #src data file is a temp file , delete it
+                                        utils.remove_file(src_data_file)
+                                    #set src_data_file to None, next run will read the data from data_file directly
+                                    src_data_file = None
+
+                                
+                                #still have data in buff, write them to hdf5 file
+                                for columnindex,reportcolumns in allreportcolumns.items():
+                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                        if  not column_filterable and not column_groupable and not column_statistical:
+                                            continue
+                    
+                                        if reprocess_columns and column_name not in reprocess_columns:
+                                            #this is not the first run, and this column no nedd to process again
+                                            continue
+                    
+                                        if indexbuff_index > 0:
+                                            indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
+
+                                if context.get("reprocess"):
+                                    #data file is ready, can read the data from data_file directly after the first run
+                                    reprocess_columns = context.pop("reprocess")
+                                    logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,reprocess_columns))
+                                else:
+                                    #the data file has been processed. 
+                                    if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
+                                        raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,data_index_file))
+                                    else:
+                                        logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
+                                    break
+                    
                     finally:
                         if src_data_file:
                             try:
@@ -386,23 +420,15 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                             except:
                                 pass
 
-                            if not harvester.is_local():
-                                #src data file is a temp file , delete it
-                                utils.remove_file(src_data_file)
-        
                         #release the memory
                         indexdatasets = None
                         indexbuffs = None
                         databuff = None
                     
-                    #rename the tmp data file to data file if required
-                    if src_data_file:
-                        os.rename(tmp_data_file,data_file)
-
                     #rename the tmp file to index file
                     if excluded_rows:
                         #some rows are excluded from access log, the size of the index dataset should be shrinked to (dataset_baseindex + buff_index)
-                        dataset_size = dataset_baseindex + buff_index
+                        dataset_size = indexbuff_baseindex + indexbuff_index
                         tmp2_index_file = "{}.tmp2".format(data_index_file)
                         with h5py.File(tmp2_index_file,'w') as tmp2_h5:
                             with h5py.File(tmp_index_file,'r') as tmp_h5:
@@ -439,8 +465,8 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
         float_buffer = None
         string_buffer = None
         column_data = None
-        #A map to show how to use the share data buff in filtering, group by and reportset.
-        #key will be the id of the member from filtering or group by or reportset if the column included in the list member will use the databuff;
+        #A map to show how to use the share data buff in filtering, group by and resultset.
+        #key will be the id of the member from filtering or group by or resultset if the column included in the list member will use the databuff;
         #value is the data buff(int_buffer or float_buffer or string_buffer) which the column should use.
         data_buffers = {}
 
@@ -474,13 +500,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
         if report_group_by:
             #group_by feature is required
-            #Use pandas to implement 'group by' feature, all dataset including columns in 'group by' and 'reportset' will be loaded into the memory.
+            #Use pandas to implement 'group by' feature, all dataset including columns in 'group by' and 'resultset' will be loaded into the memory.
             #use the existing data buff if it already exist for some column
             if data_buffers:
-                closest_int_column = [None,None,None] #three members (the item with lower type, the item with exact type,the item with upper type), each memeber is None or list with 2 members:[ group_by or reportset item,col_type]
+                closest_int_column = [None,None,None] #three members (the item with lower type, the item with exact type,the item with upper type), each memeber is None or list with 2 members:[ group_by or resultset item,col_type]
                 closest_float_column = [None,None,None]
                 closest_string_column = [None,None,None]
-                for item in itertools.chain(report_group_by,reportset):
+                for item in itertools.chain(report_group_by,resultset):
                     colname = item[0] if isinstance(item,list) else item
                     if colname == "*":
                         continue
@@ -501,7 +527,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                 else:
                                     t = datatransformer.ceiling_type(data_buffer[0],col_type)
                                     if t == data_buffer[0]:
-                                        #the int_buffer can hold the current report set column, reportset column's type is less then int_buffer's type
+                                        #the int_buffer can hold the current report set column, resultset column's type is less then int_buffer's type
                                         #choose the column which is closest to int_buffer type
                                         if closest_column[0]:
                                             if closest_column[0][1] < col_type:
@@ -509,7 +535,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                         else:
                                             closest_column[0] = [item,col_type]
                                     elif t == col_type:
-                                        #the reportset column can hold the int_buffer data, reportset column's type is greater then int_buffer's type
+                                        #the resultset column can hold the int_buffer data, resultset column's type is greater then int_buffer's type
                                         #choose the column which is closest to int_buffer type
                                         if closest_column[2]:
                                             if closest_column[2][1] > col_type:
@@ -517,7 +543,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                         else:
                                             closest_column[2] = [item,col_type]
                                     else:
-                                        #both the reportset column and in_buff can't hold each other,the result type is greater then int_buffer's type and reportset column type
+                                        #both the resultset column and in_buff can't hold each other,the result type is greater then int_buffer's type and resultset column type
                                         #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
                                         if closest_column[2]:
                                             if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
@@ -537,14 +563,14 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     (float_buffer,closest_float_column),
                     (string_buffer,closest_string_column)):
                     if closest_column[1]:
-                        #one column in group_by or reportset has the same type as int_buffer
+                        #one column in group_by or resultset has the same type as int_buffer
                         data_buffers[id(closest_column[1][0])] = data_buffer
                     elif closest_column[2] and datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
-                        #one column in group_by or reportset has a data type which is bigger than int_buffer
+                        #one column in group_by or resultset has a data type which is bigger than int_buffer
                         data_buffer[0] = closest_column[2][1]
                         data_buffers[id(closest_column[2][0])] = data_buffer
                     elif closest_column[0] and datatransformer.ceiling_type(data_buffer[0],closest_column[0][1]) == closest_column[0][1]:
-                        #one column in group_by or reportset has a data type which is less than int_buffer
+                        #one column in group_by or resultset has a data type which is less than int_buffer
                         data_buffers[id(closest_column[0][0])] = data_buffer
                     elif closest_column[0]:
                         #choose the column whose type is less than int_buffer but closest to int_buffer
@@ -554,10 +580,10 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         data_buffer[0] = closest_column[2][1]
                         data_buffers[id(closest_column[2][0])] = data_buffer
 
-        elif isinstance(reportset,(list,tuple)):
+        elif isinstance(resultset,(list,tuple)):
             #group_by feature is not required.
             #perform the statistics one by one, try best to share the data buffer
-            for item in reportset:
+            for item in resultset:
                 if item[0] == "*":
                     continue
                 col = column_map[item[0]]
@@ -660,7 +686,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 filtered_rows = dataset_size
 
 
-            if reportset == "__details__":
+            if resultset == "__details__":
                 #return the detail logs
                 if filtered_rows == 0:
                     logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
@@ -700,7 +726,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     elif report_type == DAILY_REPORT:
                         df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
     
-                    for item in itertools.chain(report_group_by,reportset):
+                    for item in itertools.chain(report_group_by,resultset):
                         colname = item[0] if isinstance(item,(list,tuple)) else item
                         if colname == "*":
                             continue
@@ -730,7 +756,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     #perfrom the statistics on group
                     #populate the statistics map
                     statics_map = collections.OrderedDict()
-                    for item in reportset:
+                    for item in resultset:
                         if item[0] == "*":
                             #use the first group by column to calculate the count
                             colname = report_group_by[0]
@@ -748,7 +774,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
             else:
                 #no 'group by', return the statistics data.
                 if filtered_rows == 0:
-                    report_data = [0] * len(reportset)
+                    report_data = [0] * len(resultset)
                     if report_type == HOURLY_REPORT:
                         report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
                 else:
@@ -757,7 +783,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                     else:
                         report_data = []
                     previous_item = None
-                    for item in reportset:
+                    for item in resultset:
                         if not previous_item or previous_item[0] != item[0]:
                             #new column should be loaded
                             previous_item = item
@@ -798,7 +824,7 @@ DRIVER_STATISTICAL=4
 DRIVER_FILTERABLE=5
 DRIVER_GROUPABLE=6
 
-def merge_reportresult_factory(reportset):
+def merge_reportresult_factory(resultset):
     """
     Return a functon which can be used by reduce and reducebykey to merge the results returned by spark's map function.
     """
@@ -819,23 +845,23 @@ def merge_reportresult_factory(reportset):
             #convert data1 to list
             data1 = list(data1)
 
-        for i in range(len(reportset)):
-            data1[i] = operation.get_merge_func(reportset[i][1])(data1[i],data2[i])
+        for i in range(len(resultset)):
+            data1[i] = operation.get_merge_func(resultset[i][1])(data1[i],data2[i])
         
         return data1
 
     return _merge
 
-def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportset,report_sort_by):
+def sort_group_by_result_factory(databaseurl,column_map,report_group_by,resultset,report_sort_by):
     """
     Return a function which is used to sort the group by result.
-    Desc is only supported for number column including reportset(all columns in reportset are statistical number column and groupe column in report group-by data
+    Desc is only supported for number column including resultset(all columns in resultset are statistical number column and groupe column in report group-by data
     params:
         column_map: a map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
     """
-    #find the sort indexes in group columns and reportset columns
+    #find the sort indexes in group columns and resultset columns
     #find whether the data should be converted or not before sort
-    sort_indexes = [] # for group by column: a tuple (group_by index or reportset index,columnid,asc?), for reportset column: a tuple(reportset index, asc?)
+    sort_indexes = [] # for group by column: a tuple (group_by index or resultset index,columnid,asc?), for resultset column: a tuple(resultset index, asc?)
     
     for item in report_sort_by:
         try:
@@ -851,8 +877,8 @@ def sort_group_by_result_factory(databaseurl,column_map,report_group_by,reportse
             sort_indexes.append((i,colid,True if colid else item[1]))
         except ValueError as ex:
             #not in group by columns
-            for i in range(len(reportset)):
-                if reportset[i][2] == item:
+            for i in range(len(resultset)):
+                if resultset[i][2] == item:
                     sort_indexes.append((i,item[1]))
                     break
         except:
@@ -966,17 +992,17 @@ def group_by_raw_report_iterator(report_result,databaseurl,enum_colids):
         for k,v in report_result:
             yield itertools.chain(_group_by_key_iterator(k),v)
 
-def reportsetrow_iterator(row,original_reportset):
+def resultsetrow_iterator(row,original_resultset):
     """
-    Return a iterator to iterate the raw reportset to generate a list data for report
+    Return a iterator to iterate the raw resultset to generate a list data for report
     params:
         report_result: a iterator of tuple(keys, values)
     """
     #converting the enum id to enum key is not required
-    for c in original_reportset:
+    for c in original_resultset:
         yield c[3](row)
 
-def group_by_report_iterator(report_result,databaseurl,enum_colids,original_reportset):
+def group_by_report_iterator(report_result,databaseurl,enum_colids,original_resultset):
     """
     Return a iterator to iterate the group by raw report_result to generate a list data for report
     params:
@@ -986,21 +1012,21 @@ def group_by_report_iterator(report_result,databaseurl,enum_colids,original_repo
     if enum_colids:
         #converting the enum id to enum key is required
         for k,v in report_result:
-            yield itertools.chain(_group_by_data_iterator(_group_by_key_iterator(k),databaseurl,enum_colids),reportsetrow_iterator(v,original_reportset))
+            yield itertools.chain(_group_by_data_iterator(_group_by_key_iterator(k),databaseurl,enum_colids),resultsetrow_iterator(v,original_resultset))
     else:
         #converting the enum id to enum key is not required
         for k,v in report_result:
-            yield itertools.chain(_group_by_key_iterator(k),reportsetrow_iterator(v,original_reportset))
+            yield itertools.chain(_group_by_key_iterator(k),resultsetrow_iterator(v,original_resultset))
 
-def reportset_iterator(report_result,original_reportset):
+def resultset_iterator(report_result,original_resultset):
     """
-    Return a iterator to iterate the raw reportset to generate a list data for report
+    Return a iterator to iterate the raw resultset to generate a list data for report
     params:
         report_result: a iterator of tuple(keys, values)
     """
     #converting the enum id to enum key is not required
     for v in report_result:
-        yield reportsetrow_iterator(v,original_reportset)
+        yield resultsetrow_iterator(v,original_resultset)
 
 def get_report_data_factory(pos):
     """
@@ -1011,12 +1037,12 @@ def get_report_data_factory(pos):
 
     return _func
 
-def get_report_avg_factory(reportset,item):
+def get_report_avg_factory(resultset,item):
     """
     Return a method to get the column avg from report data
     """
-    count_pos = next(i for i in range(len(reportset)) if reportset[i][1] == "count")
-    sum_pos = next(i for i in range(len(reportset)) if reportset[i][1] == "sum" and reportset[i][0] == item[0])
+    count_pos = next(i for i in range(len(resultset)) if resultset[i][1] == "count")
+    sum_pos = next(i for i in range(len(resultset)) if resultset[i][1] == "sum" and resultset[i][0] == item[0])
 
     def _func(row):
         if row[count_pos] <= 0:
@@ -1064,6 +1090,7 @@ def run():
     The entry point of pyspark application
     """
     try:
+        report_status = None
         #get environment variable passed by report 
         databaseurl = os.environ.get("DATABASEURL")
         if not databaseurl:
@@ -1078,15 +1105,22 @@ def run():
         column_map = {} #map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("select name,dataset_id,\"start\",\"end\",rtype,conditions,\"group_by\",\"sort_by\",reportset from datascience_report where id = {}".format(reportid))
+                cursor.execute("select name,dataset_id,\"start\",\"end\",rtype,conditions,\"group_by\",\"sort_by\",resultset,status from datascience_report where id = {}".format(reportid))
                 report = cursor.fetchone()
                 if report is None:
                     raise Exception("Report({}) doesn't exist.".format(reportid))
-                report_name,datasetid,report_start,report_end,report_type,report_conditions,report_group_by,report_sort_by,reportset = report
+                report_name,datasetid,report_start,report_end,report_type,report_conditions,report_group_by,report_sort_by,resultset,report_status = report
+                if report_status and report_status.get("status") == "Succeed":
+                    #already succeed
+                    report_status = None
+                    return
+                elif report_status is None:
+                    report_status = {}
+
                 if report_sort_by:
                     #convert the sort type from string to bool
                     for item in report_sort_by:
-                        item[1] = True if item[1] == "T" else False
+                        item[1] = True if item[1] == "asc" else False
     
                 cursor.execute("select name,datasetinfo from datascience_dataset where id = {}".format(datasetid))
                 dataset = cursor.fetchone()
@@ -1097,6 +1131,10 @@ def run():
                 cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
                 for row in cursor.fetchall():
                     column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
+
+                report_status["status"] = "Running"
+                cursor.execute("update datascience_report set status='{1}',exec_start='{2}',exec_end=null where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
+                conn.commit()
 
         if report_type == DAILY_REPORT:
             #for daily report, the minimum time unit of report_start and report_end is day; if it is not, set hour,minute,second and microsecond to 0
@@ -1143,8 +1181,7 @@ def run():
                 #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
                 #map the value to internal value used by dataset
                 cond[2] = cond[2].strip() if cond[2] else cond[2]
-                if cond[2].startswith('[') and cond[2].endswith(']'):
-                    cond[2] = json.loads(cond[2])
+                cond[2] = json.loads(cond[2])
                 cond.append(False)
                 if isinstance(cond[2],list):
                     for i in range(len(cond[2])):
@@ -1168,6 +1205,12 @@ def run():
                         elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                             #encode the string value
                             cond[2][i] = (cond[2][i] or "").encode()
+                        elif datatransformer.is_int_type(col[DRIVER_DTYPE]):
+                            cond[2][i] = int(cond[2][i]) if cond[2][i] or cond[2][i] == 0 else None
+                        elif datatransformer.is_float_type(col[DRIVER_DTYPE]):
+                            cond[2][i] = float(cond[2][i]) if cond[2][i] or cond[2][i] == 0 else None
+                        else:
+                            raise Exception("Type({}) Not Supported".format(col[DRIVER_DTYPE]))
 
                 else:
                     if col[DRIVER_TRANSFORMER]:
@@ -1187,34 +1230,38 @@ def run():
                     elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                         #encode the string value
                         cond[2]= (cond[2] or "").encode()
-
-
-        #if reportset contains a column '__all__', means this report will return acess log details, ignore other reportset columns
-        #if 'count' is in reportset, change the column to * and also check whether reportset has multiple count column
-        if not reportset:
-            reportset = "__details__"
-            original_reportset = None
+                    elif datatransformer.is_int_type(col[DRIVER_DTYPE]):
+                        cond[2]= int(cond[2]) if cond[2] or cond[2] == 0 else None
+                    elif datatransformer.is_float_type(col[DRIVER_DTYPE]):
+                        cond[2]= float(cond[2]) if cond[2] or cond[2] == 0 else None
+                    else:
+                        raise Exception("Type({}) Not Supported".format(col[DRIVER_DTYPE]))
+        #if resultset contains a column '__all__', means this report will return acess log details, ignore other resultset columns
+        #if 'count' is in resultset, change the column to * and also check whether resultset has multiple count column
+        if not resultset:
+            resultset = "__details__"
+            original_resultset = None
         else:
             count_column = None
             count_column_required = False
             found_avg = False
             found_sum = False
             previous_item = None
-            #backup the original reportset, deep clone
-            original_reportset = [[c[0],c[1],c[2] if c[2] else ("{}-{}".format(c[0],c[1]) if c[1] else c[0])] for c in reportset]
-            reportset.sort()
-            for i in range(len(reportset) - 1,-1,-1):
-                item = reportset[i]
+            #backup the original resultset, deep clone
+            original_resultset = [[c[0],c[1],c[2] if c[2] else ("{}-{}".format(c[0],c[1]) if c[1] else c[0])] for c in resultset]
+            resultset.sort()
+            for i in range(len(resultset) - 1,-1,-1):
+                item = resultset[i]
                 if previous_item and previous_item[0] != item[0]:
                     #new column
                     if found_avg and not found_sum:
                         #found column 'avg', but not found column 'sum',add a column 'sum'
-                        reportset.insert(i + 1,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
+                        resultset.insert(i + 1,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
                     found_avg = False
                     found_sum = False
                 if previous_item and previous_item[0] == item[0] and previous_item[1] == item[1]:
                     #this is a duplicate statistical column, delete it
-                    del reportset[i]
+                    del resultset[i]
                     continue
 
                 #always use set previous_item to item to check whether the current column is the duplicate statistical column
@@ -1222,18 +1269,18 @@ def run():
 
                 if item[0] == "__all__" :
                     #a  detail log report can't contain any statistics data.
-                    reportset = "__details__"
+                    resultset = "__details__"
                     break
                 elif not item[1]:
                     raise Exception("Missing aggregation method on column({1}) for report({0})".format(reportid,item[0]))
                 elif item[1] == "count":
-                    #remove all count columns from reportset first, and add it later. 
+                    #remove all count columns from resultset first, and add it later. 
                     if not count_column:
                         count_column = item
                         if not count_column[2]:
                             count_column[2] = "count"
                         count_column[0] = "*"
-                    del reportset[i]
+                    del resultset[i]
                     continue
                 elif item[1] == "avg" :
                     #perform a avg on a list of avg data is incorrect, because each access log file has different records.
@@ -1241,7 +1288,7 @@ def run():
                     #delete the column 'avg' and will add a column 'sum' if required
                     found_avg = True
                     count_column_required = True
-                    del reportset[i]
+                    del resultset[i]
                 elif item[1] == "sum" :
                     found_sum = True
 
@@ -1254,32 +1301,32 @@ def run():
                 if report_group_by and item[0] in report_group_by:
                     raise Exception("Can't apply aggregation method on group-by column({1}) for report({0})".format(reportid,item[0]))
             
-            if reportset != "__details__":
+            if resultset != "__details__":
                 if found_avg and not found_sum:
                     #found column 'avg', but not found column 'sum',add a column 'sum'
-                    reportset.insert(0,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
-                reportset.sort()
+                    resultset.insert(0,[previous_item[0],"sum","{}_sum".format(previous_item[0])])
+                resultset.sort()
                 count_column_index = -1
                 if count_column:
-                    #add the column 'count' back to reportset
-                    #use the first data column in reportset as the data column of count_column
+                    #add the column 'count' back to resultset
+                    #use the first data column in resultset as the data column of count_column
                     count_column[0] = "*"
-                    reportset.insert(0,count_column)
+                    resultset.insert(0,count_column)
                     count_column_index = 0
                 elif count_column_required:
                     #at least have one avg column, add a count column to implment avg feature
                     #column 'count' not found, add one
                     count_column = ["*","count","count"]
-                    reportset.insert(0,count_column)
+                    resultset.insert(0,count_column)
                     count_column_index = 0
 
-        if reportset == "__details__":
+        if resultset == "__details__":
             #this report will return all log details, report_group_by is meanless
             report_group_by = None
             report_sort_by = None
             report_type = None
         else:
-            reportset.sort()
+            resultset.sort()
 
             if report_group_by:
                 for item in report_group_by:
@@ -1295,36 +1342,38 @@ def run():
         spark = get_spark_session()
         rdd = spark.sparkContext.parallelize(datasets, len(datasets))
         #perform the analysis per nginx access log file
-        logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},reportset={4},report_type={5}".format(reportid,report_conditions,report_group_by,report_sort_by,reportset,report_type))
-        rdd = rdd.flatMap(analysis_factory(reportid,databaseurl,datasetid,dataset_info,report_start,report_end,report_conditions,report_group_by,reportset,report_type))
+        logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},resultset={4},report_type={5}".format(reportid,report_conditions,report_group_by,report_sort_by,resultset,report_type))
+        rdd = rdd.flatMap(analysis_factory(reportid,databaseurl,datasetid,dataset_info,report_start,report_end,report_conditions,report_group_by,resultset,report_type))
 
         #init the folder to place the report file
         cache_dir = dataset_info.get("cache")
         report_file_folder = os.path.join(cache_dir,"reports",report_start.strftime("%Y-%m-%d"))
         utils.mkdir(report_file_folder)
-        if reportset == "__details__":
+        if resultset == "__details__":
             result = rdd.collect()
             result.sort()
             if dataset_info.get("data_header"):
-                report_head_file = os.path.join(cache_dir,"nginxaccesslog-report_header.csv")
-                if not os.path.exists(report_head_file):
-                    #report_head_file does not exist, create it
-                    with open(report_head_file,'w') as f:
+                report_header_file = os.path.join(cache_dir,"nginxaccesslog-report_header.csv")
+                if not os.path.exists(report_header_file):
+                    #report_header_file does not exist, create it
+                    with open(report_header_file,'w') as f:
                         writer = csv.writer(f)
                         writer.writerow(dataset_info.get("data_header"))
             else:
-                report_head_file = None
+                report_header_file = None
 
             result = [r for r in result if r[3]]
             if len(result) == 0:
                 logger.debug("No data found")
-                return None
+                report_status["status"] = "Succeed"
+                report_status["records"] = 0
+                return 
 
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}{}".format(reportid,os.path.splitext(result[0][3])[1]))
-            if report_head_file:
+            if report_header_file:
                 #write the data header as report header
                 files = [r[3] for r in result]
-                files.insert(0,report_head_files)
+                files.insert(0,report_header_files)
                 utils.concat_files(files,report_file)
                 for r in result:
                     utils.remove_file(r[3])
@@ -1336,7 +1385,15 @@ def run():
                     for r in result:
                         utils.remove_file(r[3])
             logger.debug("report file = {}".format(report_file))
-            return report_file
+            report_status["status"] = "Succeed"
+            report_status["report"] = report_file
+            if report_header_file:
+                report_status["report_header"] = True
+                report_status["records"] = utils.get_line_counter(report_file) - 1
+            else:
+                report_status["report_header"] = False
+                report_status["records"] = utils.get_line_counter(report_file)
+            return 
         else:
             report_raw_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}-raw.csv".format(reportid))
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}.csv".format(reportid))
@@ -1354,40 +1411,40 @@ def run():
                 elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #a new column is added to the group_by
-                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
                     report_group_by.insert(0,"__request_time__")
                     if report_sort_by:
                         report_sort_by.insert(0,["__request_time__",True])
                     else:
                         report_sort_by = [["__request_time__",True]]
                 else:
-                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
             else:
                 if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, no need to reduce
-                    #a new column is added to reportset
+                    #a new column is added to resultset
                     report_result = rdd.collect()
-                    reportset.insert(0,["__request_time__",None,"request_time"])
-                    original_reportset.insert(0,["__request_time__",None,"request_time"])
+                    resultset.insert(0,["__request_time__",None,"request_time"])
+                    original_resultset.insert(0,["__request_time__",None,"request_time"])
                     #add a column 'request_time', adjust the value of count_column_index
                 elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #the result is a map between day and value
                     #a new column is added to the group_by
-                    report_result = rdd.reduceByKey(merge_reportresult_factory(reportset)).collect()
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
                     report_group_by = ["__request_time__"]
                     report_sort_by = [["__request_time__",True]]
                 else:
-                    report_result = [rdd.reduce(merge_reportresult_factory(reportset))]
+                    report_result = [rdd.reduce(merge_reportresult_factory(resultset))]
 
             #find the logic to get the report row data from report raw row data
-            for item in original_reportset:
+            for item in original_resultset:
                 if item[1] == "avg":
-                    item.append(get_report_avg_factory(reportset,item))
+                    item.append(get_report_avg_factory(resultset,item))
                 elif item[1] == "count":
-                    item.append(get_report_data_factory(next(i for i in range(len(reportset)) if reportset[i][1] == "count" )))
+                    item.append(get_report_data_factory(next(i for i in range(len(resultset)) if resultset[i][1] == "count" )))
                 else:
-                    item.append(get_report_data_factory(next(i for i in range(len(reportset)) if reportset[i][0] == item[0] and reportset[i][1] == item[1] )))
+                    item.append(get_report_data_factory(next(i for i in range(len(resultset)) if resultset[i][0] == item[0] and resultset[i][1] == item[1] )))
 
             if report_group_by:
                 #find the column ids for columns which will be converted from int value to enum key
@@ -1419,13 +1476,13 @@ def run():
                                     item.append(get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,None,item[1]))
                             
                         except ValueError as ex:
-                            #sort-by column is a reportset column
-                            pos = next((i for i in range(len(original_reportset)) if original_reportset[i][2] == item[0] ),-1)
+                            #sort-by column is a resultset column
+                            pos = next((i for i in range(len(original_resultset)) if original_resultset[i][2] == item[0] ),-1)
                             if pos == -1:
                                 #invalid sorg-by column
                                 del report_sort_by[i]
                             else:
-                                item.append(get_column_data_4_sortby_factory(original_reportset[pos][3],item[1]))
+                                item.append(get_column_data_4_sortby_factory(original_resultset[pos][3],item[1]))
 
                     logger.debug("sort by = {}".format(report_sort_by))
 
@@ -1446,9 +1503,9 @@ def run():
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
-                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in reportset])])
+                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in resultset])])
                 else:
-                    writer.writerow([ c[2] or c[0] for c in reportset])
+                    writer.writerow([ c[2] or c[0] for c in resultset])
                 #write rows
                 if report_group_by:
                     #save the data
@@ -1462,38 +1519,35 @@ def run():
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
-                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in original_reportset])])
+                    writer.writerow([("request_time" if c == "__request_time__" else c) for c in itertools.chain(report_group_by,[c[2] for c in original_resultset])])
                 else:
-                    writer.writerow([ c[2] or c[0] for c in original_reportset])
+                    writer.writerow([ c[2] or c[0] for c in original_resultset])
                 #write rows
                 if report_group_by:
                     #save the data
-                    writer.writerows(group_by_report_iterator(report_result,databaseurl,enum_colids,original_reportset))
+                    writer.writerows(group_by_report_iterator(report_result,databaseurl,enum_colids,original_resultset))
                 else:
                     #group_by is not enabled, all report data are statistical data
-                    writer.writerows(reportset_iterator(report_result,original_reportset))
+                    writer.writerows(resultset_iterator(report_result,original_resultset))
 
-
-        """
-        with database.Database(databaseurl).get_conn(True) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("update datascience_report set status='{{\"status\":\"Succeed\",\"report\":\"{1}\"}}',exec_end='{2}' where id = {0}".format(reportid,report_file,timezone.dbtime()))
-                conn.commit()
-        """
+            report_status["status"] = "Succeed"
+            report_status["report"] = report_file
+            report_status["raw_report"] = report_raw_file
+            report_status["report_header"] = True
+            report_status["records"] = utils.get_line_counter(report_file) - 1
     except Exception as ex:
-        logger.error("Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc()))
-        msg = str(ex).replace("\n","\\n").replace("\r","\\r").replace('"','\\"').replace("'","\\'").replace("\t","\\t")
-        """
-        with database.Database(databaseurl).get_conn(True) as conn:
-            with conn.cursor() as cursor:
-                try:
-                    cursor.execute("update datascience_report set status='{{\"status\":\"Failed\",\"message\":\"{1}\"}}',exec_end='{2}' where id = {0}".format(reportid,msg,timezone.dbtime()))
-                except Exception as ex1:
-                    logger.error("can't save the exception message({}).{}".format(str(ex),str(ex1)))
-                    cursor.execute("update datascience_report set status='{{\"status\":\"Failed\",\"message\":\"{1}\"}}',exec_end='{2}' where id = {0}".format(reportid,"Failed to save the exception message.",timezone.dbtime()))
-                conn.commit()
-        """
+        msg = "Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc())
+        logger.error(msg)
+        report_status["status"] = "Failed"
+        report_status["message"] = base64.b64encode(msg.encode()).decode()
         raise 
+    finally:
+        if report_status:
+            with database.Database(databaseurl).get_conn(True) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("update datascience_report set status='{1}',exec_end='{2}' where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
+                    conn.commit()
+
 
 
 if __name__ == "__main__":
