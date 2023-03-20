@@ -350,9 +350,9 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                                 if column_transformer:
                                                     #data  transformation is required
                                                     if column_columninfo and column_columninfo.get("parameters"):
-                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,row=item,columnname=column_name,**column_columninfo["parameters"])
+                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
                                                     else:
-                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,row=item,columnname=column_name)
+                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
                                                 else:
                                                     indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
                     
@@ -371,6 +371,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                             #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
                                             indexbuff_index = 0
                                             indexbuff_baseindex += buffer_size
+                                            logger.debug("indexbuff_baseindex = {}".format(indexbuff_baseindex))
     
                                 if src_data_file:
                                     if databuff_index > 0:
@@ -383,22 +384,25 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
                                     if not harvester.is_local():
                                         #src data file is a temp file , delete it
-                                        utils.remove_file(src_data_file)
+                                        #utils.remove_file(src_data_file)
+                                        pass
                                     #set src_data_file to None, next run will read the data from data_file directly
                                     src_data_file = None
+                                    logger.info("file({0}) which contains {1} rows, {2} rows were processed, {3} rows were ignored ".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
 
                                 
+                                logger.debug("indexbuff_baseindex = {},indexbuff_index = {}, excluded_rows = {}".format(indexbuff_baseindex,indexbuff_index,excluded_rows))
                                 #still have data in buff, write them to hdf5 file
-                                for columnindex,reportcolumns in allreportcolumns.items():
-                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
-                                        if  not column_filterable and not column_groupable and not column_statistical:
-                                            continue
+                                if indexbuff_index > 0:
+                                    for columnindex,reportcolumns in allreportcolumns.items():
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                            if  not column_filterable and not column_groupable and not column_statistical:
+                                                continue
                     
-                                        if reprocess_columns and column_name not in reprocess_columns:
-                                            #this is not the first run, and this column no nedd to process again
-                                            continue
+                                            if reprocess_columns and column_name not in reprocess_columns:
+                                                #this is not the first run, and this column no nedd to process again
+                                                continue
                     
-                                        if indexbuff_index > 0:
                                             indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
 
                                 if context.get("reprocess"):
@@ -408,7 +412,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                 else:
                                     #the data file has been processed. 
                                     if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
-                                        raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,data_index_file))
+                                        raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
                                     else:
                                         logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
                                     break
@@ -1137,23 +1141,27 @@ def run():
                 conn.commit()
 
         if report_type == DAILY_REPORT:
-            #for daily report, the minimum time unit of report_start and report_end is day; if it is not, set hour,minute,second and microsecond to 0
+            #for daily report, the minimum time unit of report_start and report_end(included) is day; if it is not, set hour,minute,second and microsecond to 0
             report_start = timezone.localtime(report_start)
             if report_start.hour or report_start.minute or report_start.second or report_start.microsecond:
                 report_start = report_start.replace(hour=0,minute=0,second=0,microsecond=0)
     
             report_end = timezone.localtime(report_end)
             if report_end.hour or report_end.minute or report_end.second or report_end.microsecond:
-                report_end = report_end.replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(hours=1)
+                report_end = report_end.replace(hour=0,minute=0,second=0,microsecond=0)
+            #because report_end is included, so set report_end to next day
+            report_end  += timedelta(days=1)
         else:
-            #the minimum time unit of report_start and report_end is hour; if it is not, set minute,second and microsecond to 0
+            #the minimum time unit of report_start and report_end(included) is hour; if it is not, set minute,second and microsecond to 0
             report_start = timezone.localtime(report_start)
             if report_start.minute or report_start.second or report_start.microsecond:
                 report_start = report_start.replace(minute=0,second=0,microsecond=0)
     
             report_end = timezone.localtime(report_end)
             if report_end.minute or report_end.second or report_end.microsecond:
-                report_end = report_end.replace(minute=0,second=0,microsecond=0) + timedelta(hours=1)
+                report_end = report_end.replace(minute=0,second=0,microsecond=0)
+            #because report_end is included, so set report_end to next hour
+            report_end  += timedelta(hours=1)
     
         #populate the list of nginx access log file
         datasets = []
@@ -1164,9 +1172,6 @@ def run():
             datasets.append((dataset_time.strftime("%Y%m%d%H"),dataset_time.strftime(dataset_info.get("filepattern"))))
             dataset_time += timedelta(hours=1)
 
-        #the following line resets the dataset the test dataset for testing
-        datasets = [("2022020811","2022020811.nginx.access.csv"),("2023010114","2023010114.nginx.access.csv")]
-        
         no_data = False
         #sort the report_conditions
         if report_conditions:

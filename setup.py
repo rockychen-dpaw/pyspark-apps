@@ -20,7 +20,8 @@ setup(
         'pandas==1.5.3',
         'h5py==3.8.0',
         'pytz==2022.7.1',
-        'psutil==5.9.4'
+        'psutil==5.9.4',
+        'azure-storage-blob==12.15.0'
     ],
     classifiers=[
         'Framework :: Pyspark',

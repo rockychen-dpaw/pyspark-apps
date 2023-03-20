@@ -3,6 +3,7 @@ import logging
 import inspect
 import psutil
 import  os
+import csv
 import socket
 from datetime import datetime
 
@@ -11,9 +12,17 @@ from . import timezone
 logger = logging.getLogger("pyspark_app.app.nginxaccesslog")
 
 def get_line_counter(f):
+    size = 0
+    with open(f) as h:
+        for row in csv.reader(h):
+            size += 1
+        
+        return size
+    """
     result = subprocess.run(["wc", "-l",f],text=True,shell=False,stdout=subprocess.PIPE) 
     result.check_returncode()
     return int(result.stdout.split()[0])
+    """
 
 def filter_file_with_linenumbers(src_file,linenumber_file,target_file):
     #awk 'NR==FNR{ pos[$1]; next }FNR in pos' indexes.txt 2022020811.nginx.access.csv
