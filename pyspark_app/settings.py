@@ -1,11 +1,19 @@
 import os
 import logging.config
 import pytz
+import logging
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-logging.config.fileConfig('{}/logging.conf'.format(BASE_DIR))
+LOGGING_CONF = os.environ.get("SPARK_LOGGING__CONF")
+if LOGGING_CONF:
+    logging.config.fileConfig(LOGGING_CONF)
+else:
+    logging.config.fileConfig('{}/logging.conf'.format(BASE_DIR))
+
+
+logger = logging.getLogger("pyspark_app.app.nginxaccesslog")
 
 SPARK_MASTER = "spark://master.spark.dbca.wa.gov.au:7077"
 DEPLOY_MODE =  "client"
@@ -19,4 +27,5 @@ SPARK_CONF = {
 }
 
 TIMEZONE = pytz.timezone("Australia/Perth")
+GEOIP_DATABASE_HOME=os.environ.get("GEOIP_DATABASE_HOME")
 

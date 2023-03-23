@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='pyspark-apps',
-    version='1.0.0',
+    version='1.0.1',
     packages=['pyspark_app'],
     description='Pyspark applications to generate data report on all kinds of big data',
     url='https://github.com/dbca-wa/pyspark-apps',
@@ -21,7 +21,8 @@ setup(
         'h5py==3.8.0',
         'pytz==2022.7.1',
         'psutil==5.9.4',
-        'azure-storage-blob==12.15.0'
+        'azure-storage-blob==12.15.0',
+        'maxminddb==2.2.0'
     ],
     classifiers=[
         'Framework :: Pyspark',

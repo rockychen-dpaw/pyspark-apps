@@ -424,6 +424,9 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                             except:
                                 pass
 
+                        #release resources in datatransformer
+                        datatransformer.clean()
+
                         #release the memory
                         indexdatasets = None
                         indexbuffs = None
