@@ -1,6 +1,5 @@
 .env*
 env*
-data*
 test*
 *.pyc
 *.sw[po]
