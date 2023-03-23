@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='pyspark-apps',
-    version='1.0.1',
+    version='1.0.0',
     packages=['pyspark_app'],
     description='Pyspark applications to generate data report on all kinds of big data',
     url='https://github.com/dbca-wa/pyspark-apps',
