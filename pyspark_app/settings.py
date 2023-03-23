@@ -6,11 +6,9 @@ import logging
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-LOGGING_CONF = os.environ.get("SPARK_LOGGING__CONF")
+LOGGING_CONF = os.environ.get("SPARK_LOGGING_CONF")
 if LOGGING_CONF:
     logging.config.fileConfig(LOGGING_CONF)
-else:
-    logging.config.fileConfig('{}/logging.conf'.format(BASE_DIR))
 
 
 logger = logging.getLogger("pyspark_app.app.nginxaccesslog")
