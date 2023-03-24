@@ -14,11 +14,14 @@ if LOGGING_CONF:
 
 logger = logging.getLogger("pyspark_app.app.nginxaccesslog")
 
-try:
-    with open(os.environ.get("SPARK_CONF")) as f:
-        SPARK_CONF = json.loads(f.read())
-except Exception as ex:
-    raise Exception("Failed to load spark configuration.{}".format(str(ex)))
+if os.environ.get("SPARK_CONF"):
+    try:
+        with open(os.environ.get("SPARK_CONF")) as f:
+            SPARK_CONF = json.loads(f.read())
+    except Exception as ex:
+        raise Exception("Failed to load spark configuration.{}".format(str(ex)))
+else:
+    SPARK_CONF = None
  
 
 TIMEZONE = pytz.timezone("Australia/Perth")
