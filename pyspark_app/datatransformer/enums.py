@@ -18,6 +18,8 @@ enum_dicts = {
 }
 
 pattern_map = {}
+function_map = {}
+
 def str2enum(key,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None):
     try:
         if not columnid:
@@ -100,8 +102,9 @@ SET key='{1}'
         logger.error("Failed to convert the value({1}) of column({0}) to enum. {2}".format(columnname,key,traceback.format_exc()))
         raise
 
-domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*$")
-def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,status_index=None,processtime_index=None,default_domain=None,context=None):
+
+#domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*(:[0-9]+)?$")
+def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid_request=None,default_domain=None,context=None,domain_pattern=None):
     try:
         if not columnid:
             raise Exception("Missing column id")
@@ -109,6 +112,22 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,s
             raise Exception("Missing database url")
         if not default_domain:
             raise Exception("Please configure the parameter 'default_domain' for column({})".format(columnname))
+
+        if domain_pattern:
+            domain_re = pattern_map.get(domain_pattern)
+            if not domain_re:
+                domain_re = re.compile(domain_pattern)
+                pattern_map[domain_pattern] = domain_re
+        else:
+            domain_re = None
+
+        if is_invalid_request:
+            f_invalid_request = function_map.get(is_invalid_request)
+            if not f_invalid_request:
+                f_invalid_request = eval(is_invalid_request)
+                function_map[is_invalid_request] = f_invalid_request
+        else:
+            f_invalid_request = None
     
         key = key.strip() if (key and key.strip()) else ""
     
@@ -126,7 +145,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,s
         elif key in enum_dicts[columnid]:
             return enum_dicts[columnid][key]
         
-        if not domain_re.search(key):
+        if domain_re and not domain_re.search(key):
             #not a valid domain
             if default_domain in enum_dicts:
                 return enum_dicts[default_domain]
@@ -147,22 +166,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,s
                             context["reprocess"].add(columnname)
                             return data[0]
 
-                        if status_index is None:
-                            raise Exception("Please configure 'status_index' in columninfo['parameters']")
-        
-                        if processtime_index is None:
-                            raise Exception("Please configure 'processtime_index' in columninfo['parameters']")
-                        status_code = record[status_index].strip() if record[status_index] else None
-                        if status_code:
-                            status_code = int(status_code)
-           
-                        processtime = record[processtime_index].strip() if record[processtime_index] else None
-                        if processtime:
-                            processtime = int(processtime)
-        
-                        #logger.debug("domain = {}, status={}, process={}".format(key,status_code,processtime))
-                        if status_code == 404 and not processtime:
-                            #maybe is a invalid domain, use the default domain
+                        if f_invalid_request and f_invalid_request(record):
                             valid_domain = False
                     
                     #request a non-exist domain, maybe sent by hacker
