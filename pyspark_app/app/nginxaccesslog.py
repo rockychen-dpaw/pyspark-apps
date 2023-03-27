@@ -125,6 +125,20 @@ def filter_factory(includes,excludes):
             excludes = eval(excludes)
             return _exclude
 
+def report_details(data_file,indexes):
+    index_index = 0
+    row_index = 0
+    with open(data_file) as data_f:
+        datareader = csv.reader(data_f)
+        for row in datareader:
+            if row_index == indexes[index_index]:
+                yield row
+                index_index += 1
+                if index_index >= len(indexes):
+                    break
+            row_index += 1
+
+
 def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,report_end,report_conditions,report_group_by,resultset,report_type):
     """
     Return a function to analysis a single nginx access log file
@@ -385,7 +399,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
 
                                     if not harvester.is_local():
                                         #src data file is a temp file , delete it
-                                        #utils.remove_file(src_data_file)
+                                        utils.remove_file(src_data_file)
                                         pass
                                     #set src_data_file to None, next run will read the data from data_file directly
                                     src_data_file = None
@@ -708,19 +722,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                 else:
                     report_size = np.count_nonzero(cond_result)
                     indexes = np.flatnonzero(cond_result)
-                    #line number is based on 1 instead of 0
-                    indexes += 1
-                    try:
-                        with tempfile.NamedTemporaryFile(prefix="datascience_",delete=False) as f:
-                            linenumber_file = f.name
-                        np.savetxt(linenumber_file,indexes,fmt='%u',delimiter=",",newline=os.linesep)
-                        report_file_folder = os.path.join(cache_dir,"reports","tmp")
-                        utils.mkdir(report_file_folder)
-                        report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
-                        utils.filter_file_with_linenumbers(data_file,linenumber_file,report_file)
-                        return [(data[0],data[1],report_size,report_file)]
-                    finally:
-                        utils.remove_file(linenumber_file)
+                    report_file_folder = os.path.join(cache_dir,"reports","tmp")
+                    utils.mkdir(report_file_folder)
+                    report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
+                    with open(report_file,'w') as report_f:
+                        reportwriter = csv.writer(report_f)
+                        reportwriter.writerows(report_details(data_file,indexes))
+                    return [(data[0],data[1],report_size,report_file)]
 
             if report_group_by :
                 #'group by' enabled
