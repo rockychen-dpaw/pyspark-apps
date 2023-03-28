@@ -1,5 +1,5 @@
 from .. import settings
-from datetime import datetime
+from datetime import datetime,timezone
 
 def get_current_timezone():
     return settings.TIMEZONE
@@ -32,6 +32,12 @@ def parse(dt,pattern,timezone=None):
 
 def dbtime(dt=None):
     return localtime(dt).strftime("%Y-%m-%d %H:%M:%S%z")
+
+def format(dt=None):
+    return localtime(dt).strftime("%Y-%m-%d %H:%M:%S")
+
+def timestamp(dt=None):
+    return  localtime(dt,timezone=timezone.utc).timestamp()
 
 def make_aware(dt, timezone=None):
     if timezone is None:

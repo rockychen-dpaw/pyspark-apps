@@ -36,6 +36,7 @@ EXECUTOR_COLUMNINFO=4
 EXECUTOR_STATISTICAL=5
 EXECUTOR_FILTERABLE=6
 EXECUTOR_GROUPABLE=7
+EXECUTOR_REFRESH_REQUESTED=8
 
 
 def get_harvester(datasetinfo):
@@ -139,7 +140,7 @@ def report_details(data_file,indexes):
             row_index += 1
 
 
-def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,report_end,report_conditions,report_group_by,resultset,report_type):
+def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_requested,report_start,report_end,report_conditions,report_group_by,resultset,report_type):
     """
     Return a function to analysis a single nginx access log file
     """
@@ -172,7 +173,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
         allreportcolumns = {}
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
                 previous_columnindex = None
                 columns = None
                 for d in itertools.chain(cursor.fetchall(),[[-1]]):
@@ -186,10 +187,10 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                             break
 
                         previous_columnindex = d[0]
-                        columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8])]]
+                        columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])]]
                         allreportcolumns[d[0]] = columns
                     else:
-                        columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8]))
+                        columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9]))
                         if d[5]:
                             if d[5].get("include"):
                                 if columns[0][0]:
@@ -209,51 +210,79 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                 else:
                                     columns[0][1] = d[5].get("exclude")
 
+        if os.path.exists(data_file) and dataset_refresh_requested and utils.file_mtime(data_file) < dataset_refresh_requested:
+            #data_file is cached before refersh requested, need to refresh again.
+            logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(data_file,timezone.format(utils.file_mtime(data_file)),timezone.format(dataset_refresh_requested)))
+            utils.remove_file(data_file)
+
+
 
         if not os.path.exists(data_file) and os.path.exists(data_index_file):
             #if data_file doesn't exist, data_indes_file should not exist too.
             utils.remove_file(data_index_file)
 
         #check data index file
+        process_required_columns = set()
         dataset_size = 0
         if os.path.exists(data_index_file):
             #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
             try:
                 with h5py.File(data_index_file,'r') as index_file:
                     for columnindex,reportcolumns in allreportcolumns.items():
-                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                             if  not column_filterable and not column_groupable and not column_statistical:
                                 continue
-                            #check whether the dataset is accessable by getting the size
-                            dataset_size = index_file[column_name].shape[0]
-
+                            try:
+                                #check whether the dataset is accessable by getting the size
+                                dataset_size = index_file[column_name].shape[0]
+                                if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                    #The column's index was created before the refresh required by the user
+                                    process_required_columns.add(column_name)
+                            except KeyError as ex:
+                                #this dataset does not exist , regenerate it
+                                process_required_columns.add(column_name)
             except:
-                #some dataset does not exist or file is corrupted.
+                #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
+                logger.error(traceback.format_exc())
                 utils.remove_file(data_index_file)
+                process_required_columns.clear()
 
-        if os.path.exists(data_index_file):
+        if os.path.exists(data_index_file) and not process_required_columns:
             #data index file is ready to use
-            logger.debug("The index file({1}) is already generated for data file({0})".format(data_file,data_index_file))
+            logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
         else:
             #data index file does not exist, generate it.
             #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
+            before_get_lock = timezone.localtime()
             with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),120) as lock:
-                if os.path.exists(data_index_file):
-                    #data index file are already generated by other process, check whether it is accessable.
-                    try:
-                        with h5py.File(data_index_file,'r') as index_file:
-                            for columnindex,reportcolumns in allreportcolumns.items():
-                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
-                                    if  not column_filterable and not column_groupable and not column_statistical:
-                                        continue
-                                    dataset_size = index_file[column_name].shape[0]
-                        #file already exist, use it directly
-                        logger.debug("The index file({1}) is already generated for data file({0})".format(data_file,data_index_file))
-                    except:
-                        #some dataset does not exist or file is corrupted.
-                        utils.remove_file(data_index_file)
+                if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
+                    #spend at least 1 second to get the lock, some other process worked on the same file too.
+                    #regenerate the process_required_columns
+                    process_required_columns.clear()
+                    if os.path.exists(data_index_file):
+                        #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
+                        try:
+                            with h5py.File(data_index_file,'r') as index_file:
+                                for columnindex,reportcolumns in allreportcolumns.items():
+                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                        if  not column_filterable and not column_groupable and not column_statistical:
+                                            continue
+                                        try:
+                                            #check whether the dataset is accessable by getting the size
+                                            dataset_size = index_file[column_name].shape[0]
+                                            if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                                #The column's index was created before the refresh required by the user
+                                                process_required_columns.add(column_name)
+                                        except KeyError as ex:
+                                            #this dataset does not exist , regenerate it
+                                            process_required_columns.add(column_name)
+                        except:
+                            #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
+                            utils.remove_file(data_index_file)
+                            process_required_columns.clear()
 
-                if not os.path.exists(data_index_file):
+
+                if not os.path.exists(data_index_file) or process_required_columns:
                     #generate the index file
                     #get the line counter of the file
                     try:
@@ -276,12 +305,22 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                     src_data_file = f.name
                                 harvester.saveas(data[1],src_data_file)
 
-                        #get the size of the original access log file or the local cached access log file which excludes the noisy datas.
-                        dataset_size = utils.get_line_counter(src_data_file or data_file)
-                        logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
-
                         #generate index file
                         tmp_index_file = "{}.tmp".format(data_index_file)
+                        if os.path.exists(data_index_file):
+                            #the index file already exist, only part of the columns need to be refreshed.
+                            #rename the index file to tmp_index_file for processing
+                            os.rename(data_index_file,tmp_index_file)
+                            logger.debug("The columns({1}) need to be refreshed in index file({0})".format(data_index_file,process_required_columns))
+                        else:
+                            if os.path.exists(tmp_index_file):
+                                #tmp index file exists, delete it
+                                utils.remove_file(tmp_index_file)
+                            dataset_size = utils.get_line_counter(src_data_file or data_file)
+                            logger.debug("Create the the index file({0})".format(data_index_file))
+
+                        logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
+                            
                         excluded_rows = 0
                         context={
                             "dataset_time":dataset_time
@@ -311,9 +350,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                             databuff = None
 
 
-                        with h5py.File(tmp_index_file,'w') as tmp_h5:
-
-                            reprocess_columns = None
+                        with h5py.File(tmp_index_file,'a') as tmp_h5:
                             while True:
                                 indexbuff_baseindex = 0
                                 indexbuff_index = 0
@@ -348,17 +385,20 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                         #generate the dataset for each index column
                                         for columnindex,reportcolumns in allreportcolumns.items():
                                             value = item[columnindex]
-                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
                                                 if  not column_filterable and not column_groupable and not column_statistical:
                                                     #no need to create index 
                                                     continue
-                                                if reprocess_columns and column_name not in reprocess_columns:
+                                                if process_required_columns and column_name not in process_required_columns:
                                                     #this is not the first run, and this column no nedd to process again
                                                     continue
                     
                                                 #create the buffer and hdf5 dataset for column
                                                 if column_name not in indexdatasets:
-                                                    indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
+                                                    if column_name in tmp_h5:
+                                                        indexdatasets[column_name] = tmp_h5[column_name]
+                                                    else:
+                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
                                                     indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
                     
                                                 #get the index data for each index column
@@ -410,22 +450,29 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                                 #still have data in buff, write them to hdf5 file
                                 if indexbuff_index > 0:
                                     for columnindex,reportcolumns in allreportcolumns.items():
-                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                             if  not column_filterable and not column_groupable and not column_statistical:
                                                 continue
                     
-                                            if reprocess_columns and column_name not in reprocess_columns:
+                                            if process_required_columns and column_name not in process_required_columns:
                                                 #this is not the first run, and this column no nedd to process again
                                                 continue
                     
                                             indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
 
                                 if context.get("reprocess"):
-                                    #data file is ready, can read the data from data_file directly after the first run
-                                    reprocess_columns = context.pop("reprocess")
-                                    logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,reprocess_columns))
+                                    #some columns need to be reprocess again
+                                    process_required_columns.clear()
+                                    for col in context.get("reprocess"):
+                                        process_required_columns.add(col)
+                                    context.get("reprocess").clear()
+                                    logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,process_required_columns))
                                 else:
                                     #the data file has been processed. 
+                                    #set the attribute 'created' on datasets
+                                    for ds in indexdatasets.values():
+                                        ds.attrs["created"] = timezone.timestamp()
+
                                     if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
                                         raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
                                     else:
@@ -455,7 +502,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         with h5py.File(tmp2_index_file,'w') as tmp2_h5:
                             with h5py.File(tmp_index_file,'r') as tmp_h5:
                                 for columnindex,reportcolumns in allreportcolumns.items():
-                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable in reportcolumns[1]:
+                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                         if  not column_filterable and not column_groupable and not column_statistical:
                                             continue
                                         try:
@@ -783,8 +830,6 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,report_start,rep
                         else:
                             statics_map[colname] = [operation.get_agg_func(item[1])]
                     df_result = df_group.agg(statics_map)
-
-                    logger.debug("columns = {}".format(df_result.columns))
 
                     result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
             else:
@@ -1138,11 +1183,11 @@ def run():
                     for item in report_sort_by:
                         item[1] = True if item[1] == "asc" else False
     
-                cursor.execute("select name,datasetinfo from datascience_dataset where id = {}".format(datasetid))
+                cursor.execute("select name,datasetinfo,refresh_requested from datascience_dataset where id = {}".format(datasetid))
                 dataset = cursor.fetchone()
                 if dataset is None:
                     raise Exception("Dataset({}) doesn't exist.".format(datasetid))
-                dataset_name,dataset_info = dataset
+                dataset_name,dataset_info,dataset_refresh_requested = dataset
 
                 cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
                 for row in cursor.fetchall():
@@ -1360,7 +1405,7 @@ def run():
         rdd = spark.sparkContext.parallelize(datasets, len(datasets))
         #perform the analysis per nginx access log file
         logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},resultset={4},report_type={5}".format(reportid,report_conditions,report_group_by,report_sort_by,resultset,report_type))
-        rdd = rdd.flatMap(analysis_factory(reportid,databaseurl,datasetid,dataset_info,report_start,report_end,report_conditions,report_group_by,resultset,report_type))
+        rdd = rdd.flatMap(analysis_factory(reportid,databaseurl,datasetid,dataset_info,dataset_refresh_requested,report_start,report_end,report_conditions,report_group_by,resultset,report_type))
 
         #init the folder to place the report file
         cache_dir = dataset_info.get("cache")
@@ -1477,7 +1522,6 @@ def run():
                         enum_colids[i] = colid
                 #sort the data if required
                 if report_sort_by:
-                    logger.debug("Before sort by = {},report_group_by={}".format(report_sort_by,report_group_by))
                     for i in range(len(report_sort_by) - 1,-1,-1): 
                         item = report_sort_by[i]
                         try:
@@ -1501,7 +1545,6 @@ def run():
                             else:
                                 item.append(get_column_data_4_sortby_factory(original_resultset[pos][3],item[1]))
 
-                    logger.debug("sort by = {}".format(report_sort_by))
 
                     if report_sort_by:
                         if len(report_sort_by) == 1:
@@ -1555,6 +1598,8 @@ def run():
     except Exception as ex:
         msg = "Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc())
         logger.error(msg)
+        if not report_status:
+            report_status = {}
         report_status["status"] = "Failed"
         report_status["message"] = base64.b64encode(msg.encode()).decode()
         raise 
