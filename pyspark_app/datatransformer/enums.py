@@ -230,7 +230,7 @@ def number2group(value,databaseurl=None,columnid=None):
                         raise Exception("Configure the lambda function iva 'is_in_group' for the group({1}) of column({0})".format(columnid,row[0]))
                     if row[2].get("is_group"):
                         try:
-                            enum_dicts[columnid].append((row[0],row[1],eval("is_group")))
+                            enum_dicts[columnid].append((row[0],row[1],eval(row[2].get("is_group"))))
                         except Exception as ex:
                             raise Exception("The lambda expression({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["is_group"],str(ex)))
                     else:
