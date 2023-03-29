@@ -211,7 +211,7 @@ SET key='{1}'
         logger.error("Failed to convert domain to enum.columnname={},key={},record={}. {}".format(columnname,key,record,traceback.format_exc()))
         raise
 
-def int2group(value,databaseurl=None,columnid=None):
+def number2group(value,databaseurl=None,columnid=None):
     if not columnid:
         raise Exception("Missing column id")
     if not databaseurl:
@@ -226,26 +226,29 @@ def int2group(value,databaseurl=None,columnid=None):
             with conn.cursor() as cursor:
                 cursor.execute("select key,value from datascience_datasetenum where column_id = {} order by value asc".format(columnid))
                 for row in cursor.fetchall():
-                    enum_dicts[columnid].append((row[0],row[1]))
+                    if not row[2]:
+                        raise Exception("Configure the lambda function iva 'is_in_group' for the group({1}) of column({0})".format(columnid,row[0]))
+                    if row[2].get("is_group"):
+                        try:
+                            enum_dicts[columnid].append((row[0],row[1],eval("is_group")))
+                        except Exception as ex:
+                            raise Exception("The lambda expression({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["is_group"],str(ex)))
+                    else:
+                        raise Exception("Configure the group pattern via 'pattern' or lambda function iva 'is_in_group' for the group({1}) of column({0})".format(columnid,row[0]))
                 if not enum_dicts[columnid]:
-                    raise Exception("The range type is not declared for column({})".format(columnid))
+                    raise Exception("Please declare the enum type for column({})".format(columnid))
 
-    range_v = None
-    for k,v in enum_dicts[columnid]:
-        if value == v:
+    for k,v,f in enum_dicts[columnid]:
+        if f(value):
             return v
-        elif value > v:
-            range_v = v
-        elif range_v is not None:
-            return range_v
-        else:
-            raise Exception("Can't find the range of the value({1}) for column({0})".format(columnid,value))
+    raise Exception("Can't find the range of the value({1}) for column({0})".format(columnid,value))
 
-    if range_v is not None:
-        return range_v
-    else:
-        raise Exception("Can't find the range of the value({1}) for column({0})".format(columnid,value))
+def _is_group_via_pattern(pattern):
+    pattern_re = re.compile(pattern,re.IGNORECASE)
+    def _func(val):
+        return True if pattern_re.search(val) else False
 
+    return _func
 
 def str2group(value,databaseurl=None,columnid=None):
     if not columnid:
@@ -262,18 +265,25 @@ def str2group(value,databaseurl=None,columnid=None):
             with conn.cursor() as cursor:
                 cursor.execute("select key,value,info from datascience_datasetenum where column_id = {} order by value asc".format(columnid))
                 for row in cursor.fetchall():
-                    if not row[2].get("pattern"):
-                        raise Exception("Missing the pattern({2}) for the group({1}) of column({0})".format(columnid,row[0],row[2]["pattern"]))
-                    try:
-                        v_re = re.compile(row[2]["pattern"])
-                    except Exception as ex:
-                        raise Exception("Invalid pattern({2}) for the group({1}) of column({0})".format(columnid,row[0],row[2]["pattern"]))
-                    enum_dicts[columnid].append((row[0],row[1],v_re))
+                    if not row[2]:
+                        raise Exception("Configure the group pattern via 'pattern' or lambda function via 'is_group' for the group({1}) of column({0})".format(columnid,row[0]))
+                    if row[2].get("is_group"):
+                        try:
+                            enum_dicts[columnid].append((row[0],row[1],eval(row[2].get("is_group"))))
+                        except Exception as ex:
+                            raise Exception("The lambda expression({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["is_group"],str(ex)))
+                    elif row[2].get("pattern"):
+                        try:
+                            enum_dicts[columnid].append((row[0],row[1],_is_group_via_pattern(row[2].get("pattern"))))
+                        except Exception as ex:
+                            raise Exception("The pattern({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["pattern"],str(ex)))
+                    else:
+                        raise Exception("Configure the group pattern via 'pattern' or lambda function via 'is_group' for the group({1}) of column({0})".format(columnid,row[0]))
                 if not enum_dicts[columnid]:
-                    raise Exception("The range type is not declared for column({})".format(columnid))
+                    raise Exception("Please declare the enum type for column({})".format(columnid))
     value = value or ""
-    for k,v,v_re in enum_dicts[columnid]:
-        if v_re.search(value):
+    for k,v,f in enum_dicts[columnid]:
+        if f(value):
             return v
 
     raise Exception("Can't find the group of the value({1}) for column({0})".format(columnid,value))
@@ -469,4 +479,4 @@ def clean():
 
 
 
-transformers = [str2enum,domain2enum,int2group,str2group,ip2city,ip2country]
+transformers = [str2enum,domain2enum,number2group,str2group,ip2city,ip2country]

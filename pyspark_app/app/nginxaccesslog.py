@@ -310,7 +310,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                         if os.path.exists(data_index_file):
                             #the index file already exist, only part of the columns need to be refreshed.
                             #rename the index file to tmp_index_file for processing
-                            os.rename(data_index_file,tmp_index_file)
+                            shutil.copy(data_index_file,tmp_index_file)
                             logger.debug("The columns({1}) need to be refreshed in index file({0})".format(data_index_file,process_required_columns))
                         else:
                             if os.path.exists(tmp_index_file):
@@ -1435,7 +1435,7 @@ def run():
             if report_header_file:
                 #write the data header as report header
                 files = [r[3] for r in result]
-                files.insert(0,report_header_files)
+                files.insert(0,report_header_file)
                 utils.concat_files(files,report_file)
                 for r in result:
                     utils.remove_file(r[3])
