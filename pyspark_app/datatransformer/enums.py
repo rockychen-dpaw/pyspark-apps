@@ -224,7 +224,7 @@ def number2group(value,databaseurl=None,columnid=None):
 
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("select key,value from datascience_datasetenum where column_id = {} order by value asc".format(columnid))
+                cursor.execute("select key,value,info from datascience_datasetenum where column_id = {} order by value asc".format(columnid))
                 for row in cursor.fetchall():
                     if not row[2]:
                         raise Exception("Configure the lambda function iva 'is_in_group' for the group({1}) of column({0})".format(columnid,row[0]))
