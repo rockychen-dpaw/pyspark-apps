@@ -79,11 +79,11 @@ def ceiling_type(t1,t2):
         t2_np = get_np_type(*t2)
 
         if t1_np.endswith(t2_np):
-            return t1 + 1
+            return (t1[0] + 1,None)
         elif t2_np.endswith(t1_np):
-            return t2 + 1
+            return (t2[0] + 1,None)
         else:
-            return t2 if t2 > t1 else t1
+            return t2 if t2[0] > t1[0] else t1
     elif is_string_type(t1[0]) and is_string_type(t2[0]):
         t1_size = int(get_np_type(*t1)[1:])
         t2_size = int(get_np_type(*t2)[1:])

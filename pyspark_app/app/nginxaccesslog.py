@@ -396,6 +396,8 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                 if process_required_columns and column_name not in process_required_columns:
                                                     #this is not the first run, and this column no nedd to process again
                                                     continue
+
+                                                column_size = column_columninfo.get("size") if column_columninfo else 64
                     
                                                 #create the buffer and hdf5 dataset for column
                                                 if column_name not in indexdatasets:
@@ -403,7 +405,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                         indexdatasets[column_name] = tmp_h5[column_name]
                                                     else:
                                                         indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
-                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_columninfo.get("size") if column_columninfo else None))
+                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
                     
                                                 #get the index data for each index column
                                                 if column_transformer:
@@ -414,8 +416,11 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                         indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
                                                 else:
                                                     #remove non printable characters
-                                                    value = value.encode("ascii",errors="ignore").decode()
-                                                    indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
+                                                    value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                    if len(value) >= column_size:
+                                                        value = value[0:column_size]
+
+                                                    indexbuffs[column_name][indexbuff_index] = value
                     
                                                 if indexbuff_index == buffer_size - 1:
                                                     #buff is full, write to hdf5 file
@@ -553,24 +558,24 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
             #apply the conditions, try to share the np array among conditions to save memory
             for item in report_conditions:
                 col = column_map[item[0]]
-                col_type = col[EXECUTOR_DTYPE]
-                if datatransformer.is_int_type(col_type):
+                col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None)
+                if datatransformer.is_int_type(col_type[0]):
                     if int_buffer:
-                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],(col_type,None))
+                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
                     else:
-                        int_buffer = [(col_type,None),None]
+                        int_buffer = [col_type,None]
                     data_buffers[id(item)] = int_buffer
-                elif datatransformer.is_float_type(col_type):
+                elif datatransformer.is_float_type(col_type[0]):
                     if float_buffer:
-                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],(col_type,None))
+                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
                     else:
-                        float_buffer = [(col_type,None),None]
+                        float_buffer = [col_type,None]
                     data_buffers[id(item)] = float_buffer
-                elif datatransformer.is_string_type(col_type):
+                elif datatransformer.is_string_type(col_type[0]):
                     if string_buffer:
-                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],(col_type,col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None))
+                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
                     else:
-                        string_buffer = [(col_type,col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None),None]
+                        string_buffer = [col_type,None]
                     data_buffers[id(item)] = string_buffer
 
         if report_group_by:
@@ -618,13 +623,14 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                         else:
                                             closest_column[2] = [item,col_type]
                                     else:
-                                        #both the resultset column and in_buff can't hold each other,the result type is greater then int_buffer's type and resultset column type
-                                        #choose the column which is closest to int_buffer type except the current chosed column's type can hold int_buffer data
+                                        #both the group by column and buff can't hold each other,the result type is greater then buffer's type and group by column type
+                                        #choose the column which is closest to buffer type except the current chosed column's type can hold buffer data
                                         if closest_column[2]:
                                             if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
-                                                #the current chosed column's type can hold int_buffer data
+                                                #the current chosed cloest column's type can hold buffer data
                                                 continue
                                             elif datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
+                                                #the current chosed cloest column's type can't hold buffer data, choose the smaller type
                                                 closest_column[2][1] = [item,col_type]
                                         else:
                                             closest_column[2] = [item,col_type]
@@ -638,21 +644,22 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                     (float_buffer,closest_float_column),
                     (string_buffer,closest_string_column)):
                     if closest_column[1]:
-                        #one column in group_by or resultset has the same type as int_buffer
+                        #one column in group_by has the same type as int_buffer
                         data_buffers[id(closest_column[1][0])] = data_buffer
                     elif closest_column[2] and datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
-                        #one column in group_by or resultset has a data type which is bigger than int_buffer
+                        #one column in group_by has a data type which can holder the data type of the buffer, use the group-by's data type as buffer's data type
                         data_buffer[0] = closest_column[2][1]
                         data_buffers[id(closest_column[2][0])] = data_buffer
                     elif closest_column[0] and datatransformer.ceiling_type(data_buffer[0],closest_column[0][1]) == closest_column[0][1]:
-                        #one column in group_by or resultset has a data type which is less than int_buffer
+                        #the data type of the buffer can hold the data type of group-by column
                         data_buffers[id(closest_column[0][0])] = data_buffer
                     elif closest_column[0]:
-                        #choose the column whose type is less than int_buffer but closest to int_buffer
+                        #choose the ceiling type of the closest smaller type and buffer type
+                        data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[0][1])
                         data_buffers[id(closest_int_column[0][0])] = data_buffer
                     elif closest_column[2]:
-                        #choose the column whose type is greater than int_buffer but closest to int_buffer
-                        data_buffer[0] = closest_column[2][1]
+                        #choose the ceiling type of the closest greater type and buffer type
+                        data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[2][1])
                         data_buffers[id(closest_column[2][0])] = data_buffer
 
         elif isinstance(resultset,(list,tuple)):
