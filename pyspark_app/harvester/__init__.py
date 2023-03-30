@@ -4,6 +4,7 @@ import logging
 from collections import OrderedDict
 from .localfs import LocalResourceHarvester
 from .blobstorage import AzureBlobStorageHarvester
+from . import exceptions
 
 logger = logging.getLogger(__name__)
 

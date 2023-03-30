@@ -153,741 +153,764 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
         import h5py
         import numpy as np
         import pandas as pd
-
-        cache_dir = datasetinfo.get("cache")
-        if not cache_dir:
-            raise Exception("Nissing the configuration 'cache_dir'")
-
-        data_cache_dir = os.path.join(cache_dir,"data")
-        report_cache_dir = os.path.join(cache_dir,"report")
-
-        dataset_time = timezone.parse(data[0],"%Y%m%d%H")
-        logger.debug("dataset_time = {}, str={}".format(dataset_time,data[0]))
-
-        cache_folder = os.path.join(data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
-        utils.mkdir(cache_folder)
-
-        harvester = None
-        #get the cached local data file and data index file
-        data_file = os.path.join(cache_folder,data[1])
-        data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
-
-        #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
-        allreportcolumns = {}
-        with database.Database(databaseurl).get_conn(True) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
-                previous_columnindex = None
-                columns = None
-                for d in itertools.chain(cursor.fetchall(),[[-1]]):
-                    if previous_columnindex is None or previous_columnindex != d[0]:
-                        #new column index
-                        if columns:
-                            #initialize the column's includes
-                            columns[0] = filter_factory(columns[0][0],columns[0][1])
-                        if d[0] == -1:
-                            #the end flag
-                            break
-
-                        previous_columnindex = d[0]
-                        columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])]]
-                        allreportcolumns[d[0]] = columns
-                    else:
-                        columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9]))
-                        if d[5]:
-                            if d[5].get("include"):
-                                if columns[0][0]:
-                                    if isinstance(columns[0][0],list):
-                                        columns[0][0].append(d[5].get("include"))
+        try:
+            cache_dir = datasetinfo.get("cache")
+            if not cache_dir:
+                raise Exception("Nissing the configuration 'cache_dir'")
+    
+            data_cache_dir = os.path.join(cache_dir,"data")
+            report_cache_dir = os.path.join(cache_dir,"report")
+    
+            dataset_time = timezone.parse(data[0],"%Y%m%d%H")
+            logger.debug("dataset_time = {}, str={}".format(dataset_time,data[0]))
+    
+            cache_folder = os.path.join(data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
+            utils.mkdir(cache_folder)
+    
+            harvester = None
+            #get the cached local data file and data index file
+            data_file = os.path.join(cache_folder,data[1])
+            data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
+    
+            #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
+            allreportcolumns = {}
+            with database.Database(databaseurl).get_conn(True) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                    previous_columnindex = None
+                    columns = None
+                    for d in itertools.chain(cursor.fetchall(),[[-1]]):
+                        if previous_columnindex is None or previous_columnindex != d[0]:
+                            #new column index
+                            if columns:
+                                #initialize the column's includes
+                                columns[0] = filter_factory(columns[0][0],columns[0][1])
+                            if d[0] == -1:
+                                #the end flag
+                                break
+    
+                            previous_columnindex = d[0]
+                            columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])]]
+                            allreportcolumns[d[0]] = columns
+                        else:
+                            columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9]))
+                            if d[5]:
+                                if d[5].get("include"):
+                                    if columns[0][0]:
+                                        if isinstance(columns[0][0],list):
+                                            columns[0][0].append(d[5].get("include"))
+                                        else:
+                                            columns[0][0] = [columns[0][0],d[5].get("include")]
                                     else:
-                                        columns[0][0] = [columns[0][0],d[5].get("include")]
-                                else:
-                                    columns[0][0] = d[5].get("include")
-
-                            if d[5].get("exclude"):
-                                if columns[0][1]:
-                                    if isinstance(columns[0][1],list):
-                                        columns[0][1].append(d[5].get("exclude"))
+                                        columns[0][0] = d[5].get("include")
+    
+                                if d[5].get("exclude"):
+                                    if columns[0][1]:
+                                        if isinstance(columns[0][1],list):
+                                            columns[0][1].append(d[5].get("exclude"))
+                                        else:
+                                            columns[0][1] = [columns[0][1],d[5].get("exclude")]
                                     else:
-                                        columns[0][1] = [columns[0][1],d[5].get("exclude")]
-                                else:
-                                    columns[0][1] = d[5].get("exclude")
-
-        if os.path.exists(data_file) and dataset_refresh_requested and utils.file_mtime(data_file) < dataset_refresh_requested:
-            #data_file is cached before refersh requested, need to refresh again.
-            logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(data_file,timezone.format(utils.file_mtime(data_file)),timezone.format(dataset_refresh_requested)))
-            utils.remove_file(data_file)
-
-
-
-        if not os.path.exists(data_file) and os.path.exists(data_index_file):
-            #if data_file doesn't exist, data_indes_file should not exist too.
-            utils.remove_file(data_index_file)
-
-        #check data index file
-        process_required_columns = set()
-        dataset_size = 0
-        if os.path.exists(data_index_file):
-            #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
-            try:
-                with h5py.File(data_index_file,'r') as index_file:
-                    for columnindex,reportcolumns in allreportcolumns.items():
-                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                            if  not column_filterable and not column_groupable and not column_statistical:
-                                continue
-                            try:
-                                #check whether the dataset is accessable by getting the size
-                                dataset_size = index_file[column_name].shape[0]
-                                if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
-                                    #The column's index was created before the refresh required by the user
-                                    process_required_columns.add(column_name)
-                            except KeyError as ex:
-                                #this dataset does not exist , regenerate it
-                                process_required_columns.add(column_name)
-            except:
-                #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
-                logger.error(traceback.format_exc())
+                                        columns[0][1] = d[5].get("exclude")
+    
+            if os.path.exists(data_file) and dataset_refresh_requested and utils.file_mtime(data_file) < dataset_refresh_requested:
+                #data_file is cached before refersh requested, need to refresh again.
+                logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(data_file,timezone.format(utils.file_mtime(data_file)),timezone.format(dataset_refresh_requested)))
+                utils.remove_file(data_file)
+    
+    
+    
+            if not os.path.exists(data_file) and os.path.exists(data_index_file):
+                #if data_file doesn't exist, data_indes_file should not exist too.
                 utils.remove_file(data_index_file)
-                process_required_columns.clear()
-
-        if os.path.exists(data_index_file) and not process_required_columns:
-            #data index file is ready to use
-            logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
-        else:
-            #data index file does not exist, generate it.
-            #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
-            before_get_lock = timezone.localtime()
-            with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),120) as lock:
-                if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
-                    #spend at least 1 second to get the lock, some other process worked on the same file too.
-                    #regenerate the process_required_columns
+    
+            #check data index file
+            process_required_columns = set()
+            dataset_size = 0
+            if os.path.exists(data_index_file):
+                #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
+                try:
+                    with h5py.File(data_index_file,'r') as index_file:
+                        for columnindex,reportcolumns in allreportcolumns.items():
+                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                if  not column_filterable and not column_groupable and not column_statistical:
+                                    continue
+                                try:
+                                    #check whether the dataset is accessable by getting the size
+                                    dataset_size = index_file[column_name].shape[0]
+                                    if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                        #The column's index was created before the refresh required by the user
+                                        process_required_columns.add(column_name)
+                                except KeyError as ex:
+                                    #this dataset does not exist , regenerate it
+                                    process_required_columns.add(column_name)
+                except:
+                    #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
+                    logger.error(traceback.format_exc())
+                    utils.remove_file(data_index_file)
                     process_required_columns.clear()
-                    if os.path.exists(data_index_file):
-                        #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
-                        try:
-                            with h5py.File(data_index_file,'r') as index_file:
-                                for columnindex,reportcolumns in allreportcolumns.items():
-                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                        if  not column_filterable and not column_groupable and not column_statistical:
-                                            continue
-                                        try:
-                                            #check whether the dataset is accessable by getting the size
-                                            dataset_size = index_file[column_name].shape[0]
-                                            if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
-                                                #The column's index was created before the refresh required by the user
-                                                process_required_columns.add(column_name)
-                                        except KeyError as ex:
-                                            #this dataset does not exist , regenerate it
-                                            process_required_columns.add(column_name)
-                        except:
-                            #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
-                            utils.remove_file(data_index_file)
-                            process_required_columns.clear()
-
-
-                if not os.path.exists(data_index_file) or process_required_columns:
-                    #generate the index file
-                    #get the line counter of the file
-                    try:
-                        indexbuff_baseindex = 0
-                        indexbuff_index = 0
-                        indexdatasets = {}
-                        indexbuffs = {}
-
-                        databuff_index = 0
-                        databuff = None
-                        #prepare the source data file if required.
-                        src_data_file = None
-                        if not os.path.exists(data_file):
-                            #local data file doesn't exist, download the source file if required as src_data_file
-                            harvester = get_harvester(datasetinfo)
-                            if harvester.is_local():
-                                src_data_file = harvester.get_abs_path(data[1])
-                            else:
-                                with tempfile.NamedTemporaryFile(prefix="datascience_ngx_log",delete=False) as f:
-                                    src_data_file = f.name
-                                harvester.saveas(data[1],src_data_file)
-
-                        #generate index file
-                        tmp_index_file = "{}.tmp".format(data_index_file)
+    
+            if os.path.exists(data_index_file) and not process_required_columns:
+                #data index file is ready to use
+                logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
+            else:
+                #data index file does not exist, generate it.
+                #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
+                before_get_lock = timezone.localtime()
+                with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),120) as lock:
+                    if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
+                        #spend at least 1 second to get the lock, some other process worked on the same file too.
+                        #regenerate the process_required_columns
+                        process_required_columns.clear()
                         if os.path.exists(data_index_file):
-                            #the index file already exist, only part of the columns need to be refreshed.
-                            #rename the index file to tmp_index_file for processing
-                            shutil.copy(data_index_file,tmp_index_file)
-                            logger.debug("The columns({1}) need to be refreshed in index file({0})".format(data_index_file,process_required_columns))
-                        else:
-                            if os.path.exists(tmp_index_file):
-                                #tmp index file exists, delete it
-                                utils.remove_file(tmp_index_file)
-                            dataset_size = utils.get_line_counter(src_data_file or data_file)
-                            logger.debug("Create the the index file({0})".format(data_index_file))
-
-                        logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
-                            
-                        excluded_rows = 0
-                        context={
-                            "dataset_time":dataset_time
-                        }
-
-                        try:
-                            buffer_size = datasetinfo.get("indexbatchsize",10000)
-                        except:
-                            buffer_size = 10000
-                        try:
-                            databuffer_size = datasetinfo.get("databatchsize",1000)
-                        except:
-                            databuffer_size = 10000
-
-                        if src_data_file:
-                            #the local cached data file doesnot exist, 
-                            #should generate the local cached data file by excluding the noisy data from original dataset.
-                            tmp_data_file = "{}.tmp".format(data_file)
-                            data_f = open(tmp_data_file,'w')
-                            logwriter = csv.writer(data_f)
-                            databuff = [None] * databuffer_size
-                        else:
-                            #found the cached file, get the data from local cached file
-                            tmp_data_file = None
-                            data_f = None
-                            logwriter = None
-                            databuff = None
-
-
-                        with h5py.File(tmp_index_file,'a') as tmp_h5:
-                            while True:
-                                indexbuff_baseindex = 0
-                                indexbuff_index = 0
-                                databuff_index = 0
-                                with open(src_data_file or data_file) as f:
-                                    logreader = csv.reader(f)
-    
-                                    for item in logreader:
-                                        #check the filter first
-                                        if src_data_file:
-                                            #data are retrieved from source, should execute the filter logic
-                                            excluded = False
-                                            for columnindex,reportcolumns in allreportcolumns.items():
-                                                value = item[columnindex]
-                                                excluded = False
-                                                if  reportcolumns[0] and not reportcolumns[0](value):
-                                                    #excluded
-                                                    excluded = True
-                                                    break
-                                            if excluded:
-                                                #record are excluded
-                                                excluded_rows += 1
-                                                continue
-                                            #data are retrieved from source,append the data to local data file
-                                            databuff[databuff_index] = item
-                                            databuff_index += 1
-                                            if databuff_index == databuffer_size:
-                                                #databuff is full, flush to file 
-                                                logwriter.writerows(databuff)
-                                                databuff_index = 0
-                                        
-                                        #generate the dataset for each index column
-                                        for columnindex,reportcolumns in allreportcolumns.items():
-                                            value = item[columnindex]
-
-                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
-                                                if  not column_filterable and not column_groupable and not column_statistical:
-                                                    #no need to create index 
-                                                    continue
-                                                if process_required_columns and column_name not in process_required_columns:
-                                                    #this is not the first run, and this column no nedd to process again
-                                                    continue
-
-                                                column_size = column_columninfo.get("size") if column_columninfo else 64
-                    
-                                                #create the buffer and hdf5 dataset for column
-                                                if column_name not in indexdatasets:
-                                                    if column_name in tmp_h5:
-                                                        indexdatasets[column_name] = tmp_h5[column_name]
-                                                    else:
-                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
-                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
-                    
-                                                #get the index data for each index column
-                                                if column_transformer:
-                                                    #data  transformation is required
-                                                    if column_columninfo and column_columninfo.get("parameters"):
-                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
-                                                    else:
-                                                        indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
-                                                else:
-                                                    #remove non printable characters
-                                                    value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
-                                                    if len(value) >= column_size:
-                                                        value = value[0:column_size]
-
-                                                    indexbuffs[column_name][indexbuff_index] = value
-                    
-                                                if indexbuff_index == buffer_size - 1:
-                                                    #buff is full, write to hdf5 file
-                                                    try:
-                                                        indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + buffer_size])
-                                                    except Exception as ex:
-                                                        logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,buffer_size,str(ex)))
-                                                        raise
-        
-                                                    lock.renew()
-                    
-                                        indexbuff_index += 1
-                                        if indexbuff_index == buffer_size:
-                                            #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
-                                            indexbuff_index = 0
-                                            indexbuff_baseindex += buffer_size
-                                            logger.debug("indexbuff_baseindex = {}".format(indexbuff_baseindex))
-    
-                                if src_data_file:
-                                    if databuff_index > 0:
-                                        #still have some data in data buff, flush it to file
-                                        logwriter.writerows(databuff[:databuff_index])
-
-                                    data_f.close()
-                                    #rename the tmp data file to data file if required
-                                    os.rename(tmp_data_file,data_file)
-
-                                    if not harvester.is_local():
-                                        #src data file is a temp file , delete it
-                                        utils.remove_file(src_data_file)
-                                        pass
-                                    #set src_data_file to None, next run will read the data from data_file directly
-                                    src_data_file = None
-                                    logger.info("file({0}) which contains {1} rows, {2} rows were processed, {3} rows were ignored ".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
-
-                                
-                                logger.debug("indexbuff_baseindex = {},indexbuff_index = {}, excluded_rows = {}".format(indexbuff_baseindex,indexbuff_index,excluded_rows))
-                                #still have data in buff, write them to hdf5 file
-                                if indexbuff_index > 0:
+                            #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
+                            try:
+                                with h5py.File(data_index_file,'r') as index_file:
                                     for columnindex,reportcolumns in allreportcolumns.items():
                                         for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                             if  not column_filterable and not column_groupable and not column_statistical:
                                                 continue
-                    
-                                            if process_required_columns and column_name not in process_required_columns:
-                                                #this is not the first run, and this column no nedd to process again
-                                                continue
-                    
-                                            indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
-
-                                if context.get("reprocess"):
-                                    #some columns need to be reprocess again
-                                    process_required_columns.clear()
-                                    for col in context.get("reprocess"):
-                                        process_required_columns.add(col)
-                                    context.get("reprocess").clear()
-                                    logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,process_required_columns))
-                                else:
-                                    #the data file has been processed. 
-                                    #set the attribute 'created' on datasets
-                                    for ds in indexdatasets.values():
-                                        ds.attrs["created"] = timezone.timestamp()
-
-                                    if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
-                                        raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
-                                    else:
-                                        logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
-                                    break
-                    
-                    finally:
-                        if src_data_file:
-                            try:
-                                data_f.close()
+                                            try:
+                                                #check whether the dataset is accessable by getting the size
+                                                dataset_size = index_file[column_name].shape[0]
+                                                if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                                    #The column's index was created before the refresh required by the user
+                                                    process_required_columns.add(column_name)
+                                            except KeyError as ex:
+                                                #this dataset does not exist , regenerate it
+                                                process_required_columns.add(column_name)
                             except:
-                                pass
-
-                        #release resources in datatransformer
-                        datatransformer.clean()
-
-                        #release the memory
-                        indexdatasets = None
-                        indexbuffs = None
-                        databuff = None
-                    
-                    #rename the tmp file to index file
-                    if excluded_rows:
-                        #some rows are excluded from access log, the size of the index dataset should be shrinked to (dataset_baseindex + buff_index)
-                        dataset_size = indexbuff_baseindex + indexbuff_index
-                        tmp2_index_file = "{}.tmp2".format(data_index_file)
-                        with h5py.File(tmp2_index_file,'w') as tmp2_h5:
-                            with h5py.File(tmp_index_file,'r') as tmp_h5:
-                                for columnindex,reportcolumns in allreportcolumns.items():
-                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                        if  not column_filterable and not column_groupable and not column_statistical:
-                                            continue
-                                        try:
-                                            tmp2_h5.create_dataset(column_name,dtype=tmp_h5[column_name].dtype,data=tmp_h5[column_name][0:dataset_size])
-                                        except Exception as ex:
-                                            logger.error("Failed to resize the dataset.file={} column={}, before size={}, after size={}. {}".format(data_index_file,column_name,tmp_h5[column_name].shape[0],dataset_size,str(ex)))
-                                            raise
-
-                        os.rename(tmp2_index_file,data_index_file)
-
-                        utils.remove_file(tmp_index_file)
-                    else:
-                        os.rename(tmp_index_file,data_index_file)
-
-
-        #popuate the column map for fast accessing.
-        column_map = {}
-        for columnindex,reportcolumns in allreportcolumns.items():
-            #column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable
-            for col in reportcolumns[1]:
-                column_map[col[1]] = col
-        allreportcolumns.clear()
-        allreportcolumns = None
-
-
-        #begin the perform the filtering, group by and statistics logic
-        #find the  share data buffer used for filtering ,group by and statistics
-        int_buffer = None
-        float_buffer = None
-        string_buffer = None
-        column_data = None
-        #A map to show how to use the share data buff in filtering, group by and resultset.
-        #key will be the id of the member from filtering or group by or resultset if the column included in the list member will use the databuff;
-        #value is the data buff(int_buffer or float_buffer or string_buffer) which the column should use.
-        data_buffers = {}
-
-        #the varialbe for the filter result.
-        cond_result = None
-
-        #conditions are applied one by one, so it is better to share the buffers among conditions
-        if report_conditions:
-            #apply the conditions, try to share the np array among conditions to save memory
-            for item in report_conditions:
-                col = column_map[item[0]]
-                col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None)
-                if datatransformer.is_int_type(col_type[0]):
-                    if int_buffer:
-                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
-                    else:
-                        int_buffer = [col_type,None]
-                    data_buffers[id(item)] = int_buffer
-                elif datatransformer.is_float_type(col_type[0]):
-                    if float_buffer:
-                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
-                    else:
-                        float_buffer = [col_type,None]
-                    data_buffers[id(item)] = float_buffer
-                elif datatransformer.is_string_type(col_type[0]):
-                    if string_buffer:
-                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
-                    else:
-                        string_buffer = [col_type,None]
-                    data_buffers[id(item)] = string_buffer
-
-        if report_group_by:
-            #group_by feature is required
-            #Use pandas to implement 'group by' feature, all dataset including columns in 'group by' and 'resultset' will be loaded into the memory.
-            #use the existing data buff if it already exist for some column
-            if data_buffers:
-                closest_int_column = [None,None,None] #three members (the item with lower type, the item with exact type,the item with upper type), each memeber is None or list with 2 members:[ group_by or resultset item,col_type]
-                closest_float_column = [None,None,None]
-                closest_string_column = [None,None,None]
-                for item in itertools.chain(report_group_by,resultset):
-                    colname = item[0] if isinstance(item,list) else item
-                    if colname == "*":
-                        continue
-                    col = column_map[colname]
-                    col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
-                    for is_func,data_buffer,closest_column in (
-                        (datatransformer.is_int_type,int_buffer,closest_int_column),
-                        (datatransformer.is_float_type,float_buffer,closest_float_column),
-                        (datatransformer.is_string_type,string_buffer,closest_string_column)):
-                        if is_func(col_type[0]):
-                            if data_buffer:
-                                if closest_column[1] and closest_column[1][1] == data_buffer[0]:
-                                    #already match exactly
-                                    continue
-                                elif data_buffer[0] == col_type:
-                                    #match exactly
-                                    closest_column[1] = [item,col_type]
+                                #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
+                                utils.remove_file(data_index_file)
+                                process_required_columns.clear()
+    
+    
+                    if not os.path.exists(data_index_file) or process_required_columns:
+                        #generate the index file
+                        #get the line counter of the file
+                        try:
+                            indexbuff_baseindex = 0
+                            indexbuff_index = 0
+                            indexdatasets = {}
+                            indexbuffs = {}
+    
+                            databuff_index = 0
+                            databuff = None
+                            #prepare the source data file if required.
+                            src_data_file = None
+                            if not os.path.exists(data_file):
+                                #local data file doesn't exist, download the source file if required as src_data_file
+                                harvester = get_harvester(datasetinfo)
+                                if harvester.is_local():
+                                    src_data_file = harvester.get_abs_path(data[1])
                                 else:
-                                    t = datatransformer.ceiling_type(data_buffer[0],col_type)
-                                    if t == data_buffer[0]:
-                                        #the buffer can hold the current group by column, group by column's type is less then buffer's type
-                                        #choose the column which is closest to buffer type
-                                        if closest_column[0]:
-                                            if datatransformer.bigger_type(closest_column[0][1],col_type) == col_type:
-                                                closest_column[0][1] = [item,col_type]
-                                        else:
-                                            closest_column[0] = [item,col_type]
-                                    elif t == col_type:
-                                        #the group by column can hold the buffer data, group column's type is greater then buffer's type
-                                        #choose the column which is closest to buffer type
-                                        if closest_column[2]:
-                                            if datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
-                                                closest_column[2][1] = [item,col_type]
-                                        else:
-                                            closest_column[2] = [item,col_type]
+                                    with tempfile.NamedTemporaryFile(prefix="datascience_ngx_log",delete=False) as f:
+                                        src_data_file = f.name
+                                    harvester.saveas(data[1],src_data_file)
+    
+                            #generate index file
+                            tmp_index_file = "{}.tmp".format(data_index_file)
+                            if os.path.exists(data_index_file):
+                                #the index file already exist, only part of the columns need to be refreshed.
+                                #rename the index file to tmp_index_file for processing
+                                shutil.copy(data_index_file,tmp_index_file)
+                                logger.debug("The columns({1}) need to be refreshed in index file({0})".format(data_index_file,process_required_columns))
+                            else:
+                                if os.path.exists(tmp_index_file):
+                                    #tmp index file exists, delete it
+                                    utils.remove_file(tmp_index_file)
+                                dataset_size = utils.get_line_counter(src_data_file or data_file)
+                                logger.debug("Create the the index file({0})".format(data_index_file))
+    
+                            logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
+                                
+                            excluded_rows = 0
+                            context={
+                                "dataset_time":dataset_time
+                            }
+    
+                            try:
+                                buffer_size = datasetinfo.get("indexbatchsize",10000)
+                            except:
+                                buffer_size = 10000
+                            try:
+                                databuffer_size = datasetinfo.get("databatchsize",1000)
+                            except:
+                                databuffer_size = 10000
+    
+                            if src_data_file:
+                                #the local cached data file doesnot exist, 
+                                #should generate the local cached data file by excluding the noisy data from original dataset.
+                                tmp_data_file = "{}.tmp".format(data_file)
+                                data_f = open(tmp_data_file,'w')
+                                logwriter = csv.writer(data_f)
+                                databuff = [None] * databuffer_size
+                            else:
+                                #found the cached file, get the data from local cached file
+                                tmp_data_file = None
+                                data_f = None
+                                logwriter = None
+                                databuff = None
+    
+    
+                            with h5py.File(tmp_index_file,'a') as tmp_h5:
+                                while True:
+                                    indexbuff_baseindex = 0
+                                    indexbuff_index = 0
+                                    databuff_index = 0
+                                    with open(src_data_file or data_file) as f:
+                                        logreader = csv.reader(f)
+        
+                                        for item in logreader:
+                                            #check the filter first
+                                            if src_data_file:
+                                                #data are retrieved from source, should execute the filter logic
+                                                excluded = False
+                                                for columnindex,reportcolumns in allreportcolumns.items():
+                                                    value = item[columnindex]
+                                                    excluded = False
+                                                    if  reportcolumns[0] and not reportcolumns[0](value):
+                                                        #excluded
+                                                        excluded = True
+                                                        break
+                                                if excluded:
+                                                    #record are excluded
+                                                    excluded_rows += 1
+                                                    continue
+                                                #data are retrieved from source,append the data to local data file
+                                                databuff[databuff_index] = item
+                                                databuff_index += 1
+                                                if databuff_index == databuffer_size:
+                                                    #databuff is full, flush to file 
+                                                    logwriter.writerows(databuff)
+                                                    databuff_index = 0
+                                            
+                                            #generate the dataset for each index column
+                                            for columnindex,reportcolumns in allreportcolumns.items():
+                                                value = item[columnindex]
+    
+                                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
+                                                    if  not column_filterable and not column_groupable and not column_statistical:
+                                                        #no need to create index 
+                                                        continue
+                                                    if process_required_columns and column_name not in process_required_columns:
+                                                        #this is not the first run, and this column no nedd to process again
+                                                        continue
+    
+                                                    column_size = column_columninfo.get("size") if column_columninfo else 64
+                        
+                                                    #create the buffer and hdf5 dataset for column
+                                                    if column_name not in indexdatasets:
+                                                        if column_name in tmp_h5:
+                                                            indexdatasets[column_name] = tmp_h5[column_name]
+                                                        else:
+                                                            indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
+                                                        indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
+                        
+                                                    #get the index data for each index column
+                                                    if column_transformer:
+                                                        #data  transformation is required
+                                                        if column_columninfo and column_columninfo.get("parameters"):
+                                                            indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
+                                                        else:
+                                                            indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
+                                                    else:
+                                                        #remove non printable characters
+                                                        value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                        if len(value) >= column_size:
+                                                            value = value[0:column_size]
+    
+                                                        indexbuffs[column_name][indexbuff_index] = value
+                        
+                                                    if indexbuff_index == buffer_size - 1:
+                                                        #buff is full, write to hdf5 file
+                                                        try:
+                                                            indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + buffer_size])
+                                                        except Exception as ex:
+                                                            logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,buffer_size,str(ex)))
+                                                            raise
+            
+                                                        lock.renew()
+                        
+                                            indexbuff_index += 1
+                                            if indexbuff_index == buffer_size:
+                                                #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
+                                                indexbuff_index = 0
+                                                indexbuff_baseindex += buffer_size
+                                                logger.debug("indexbuff_baseindex = {}".format(indexbuff_baseindex))
+        
+                                    if src_data_file:
+                                        if databuff_index > 0:
+                                            #still have some data in data buff, flush it to file
+                                            logwriter.writerows(databuff[:databuff_index])
+    
+                                        data_f.close()
+                                        #rename the tmp data file to data file if required
+                                        os.rename(tmp_data_file,data_file)
+    
+                                        if not harvester.is_local():
+                                            #src data file is a temp file , delete it
+                                            utils.remove_file(src_data_file)
+                                            pass
+                                        #set src_data_file to None, next run will read the data from data_file directly
+                                        src_data_file = None
+                                        logger.info("file({0}) which contains {1} rows, {2} rows were processed, {3} rows were ignored ".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
+    
+                                    
+                                    logger.debug("indexbuff_baseindex = {},indexbuff_index = {}, excluded_rows = {}".format(indexbuff_baseindex,indexbuff_index,excluded_rows))
+                                    #still have data in buff, write them to hdf5 file
+                                    if indexbuff_index > 0:
+                                        for columnindex,reportcolumns in allreportcolumns.items():
+                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                                if  not column_filterable and not column_groupable and not column_statistical:
+                                                    continue
+                        
+                                                if process_required_columns and column_name not in process_required_columns:
+                                                    #this is not the first run, and this column no nedd to process again
+                                                    continue
+                        
+                                                indexdatasets[column_name].write_direct(indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
+    
+                                    if context.get("reprocess"):
+                                        #some columns need to be reprocess again
+                                        process_required_columns.clear()
+                                        for col in context.get("reprocess"):
+                                            process_required_columns.add(col)
+                                        context.get("reprocess").clear()
+                                        logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,process_required_columns))
                                     else:
-                                        #both the group by column and buff can't hold each other,the result type is greater then buffer's type and group by column type
-                                        #choose the column which is closest to buffer type except the current chosed column's type can hold buffer data
-                                        if closest_column[2]:
-                                            if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
-                                                #the current chosed cloest column's type can hold buffer data
-                                                continue
-                                            elif datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
-                                                #the current chosed cloest column's type can't hold buffer data, choose the smaller type
-                                                closest_column[2][1] = [item,col_type]
+                                        #the data file has been processed. 
+                                        #set the attribute 'created' on datasets
+                                        for ds in indexdatasets.values():
+                                            ds.attrs["created"] = timezone.timestamp()
+    
+                                        if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
+                                            raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
                                         else:
-                                            closest_column[2] = [item,col_type]
-                            break
-
-
-
-                #choose the right column to share the data buffer chosed in report conditions
-                for data_buffer,closest_column in (
-                    (int_buffer,closest_int_column),
-                    (float_buffer,closest_float_column),
-                    (string_buffer,closest_string_column)):
-                    if closest_column[1]:
-                        #one column in group_by has the same type as int_buffer
-                        data_buffers[id(closest_column[1][0])] = data_buffer
-                    elif closest_column[2] and datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
-                        #one column in group_by has a data type which can holder the data type of the buffer, use the group-by's data type as buffer's data type
-                        data_buffer[0] = closest_column[2][1]
-                        data_buffers[id(closest_column[2][0])] = data_buffer
-                    elif closest_column[0] and datatransformer.ceiling_type(data_buffer[0],closest_column[0][1]) == closest_column[0][1]:
-                        #the data type of the buffer can hold the data type of group-by column
-                        data_buffers[id(closest_column[0][0])] = data_buffer
-                    elif closest_column[0]:
-                        #choose the ceiling type of the closest smaller type and buffer type
-                        data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[0][1])
-                        data_buffers[id(closest_int_column[0][0])] = data_buffer
-                    elif closest_column[2]:
-                        #choose the ceiling type of the closest greater type and buffer type
-                        data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[2][1])
-                        data_buffers[id(closest_column[2][0])] = data_buffer
-
-        elif isinstance(resultset,(list,tuple)):
-            #group_by feature is not required.
-            #perform the statistics one by one, try best to share the data buffer
-            for item in resultset:
-                if item[0] == "*":
-                    continue
-                col = column_map[item[0]]
-                col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
-                if datatransformer.is_int_type(col_type[0]):
-                    if int_buffer:
-                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
-                    else:
-                        int_buffer = [col_type,None]
-                    data_buffers[id(item)] = int_buffer
-                elif datatransformer.is_float_type(col_type[0]):
-                    if float_buffer:
-                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
-                    else:
-                        float_buffer = [col_type,None]
-                    data_buffers[id(item)] = float_buffer
-                elif datatransformer.is_string_type(col_type[0]):
-                    if string_buffer:
-                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
-                    else:
-                        string_buffer = [col_type,None]
-                    data_buffers[id(item)] = string_buffer
-
-        with h5py.File(data_index_file,'r') as index_h5:
-            #filter the dataset
+                                            logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
+                                        break
+                        
+                        finally:
+                            if src_data_file:
+                                try:
+                                    data_f.close()
+                                except:
+                                    pass
+    
+                            #release resources in datatransformer
+                            datatransformer.clean()
+    
+                            #release the memory
+                            indexdatasets = None
+                            indexbuffs = None
+                            databuff = None
+                        
+                        #rename the tmp file to index file
+                        if excluded_rows:
+                            #some rows are excluded from access log, the size of the index dataset should be shrinked to (dataset_baseindex + buff_index)
+                            dataset_size = indexbuff_baseindex + indexbuff_index
+                            tmp2_index_file = "{}.tmp2".format(data_index_file)
+                            with h5py.File(tmp2_index_file,'w') as tmp2_h5:
+                                with h5py.File(tmp_index_file,'r') as tmp_h5:
+                                    for columnindex,reportcolumns in allreportcolumns.items():
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                            if  not column_filterable and not column_groupable and not column_statistical:
+                                                continue
+                                            try:
+                                                tmp2_h5.create_dataset(column_name,dtype=tmp_h5[column_name].dtype,data=tmp_h5[column_name][0:dataset_size])
+                                            except Exception as ex:
+                                                logger.error("Failed to resize the dataset.file={} column={}, before size={}, after size={}. {}".format(data_index_file,column_name,tmp_h5[column_name].shape[0],dataset_size,str(ex)))
+                                                raise
+    
+                            os.rename(tmp2_index_file,data_index_file)
+    
+                            utils.remove_file(tmp_index_file)
+                        else:
+                            os.rename(tmp_index_file,data_index_file)
+    
+    
+            #popuate the column map for fast accessing.
+            column_map = {}
+            for columnindex,reportcolumns in allreportcolumns.items():
+                #column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable
+                for col in reportcolumns[1]:
+                    column_map[col[1]] = col
+            allreportcolumns.clear()
+            allreportcolumns = None
+    
+    
+            #begin the perform the filtering, group by and statistics logic
+            #find the  share data buffer used for filtering ,group by and statistics
+            int_buffer = None
+            float_buffer = None
+            string_buffer = None
+            column_data = None
+            #A map to show how to use the share data buff in filtering, group by and resultset.
+            #key will be the id of the member from filtering or group by or resultset if the column included in the list member will use the databuff;
+            #value is the data buff(int_buffer or float_buffer or string_buffer) which the column should use.
+            data_buffers = {}
+    
+            #the varialbe for the filter result.
+            cond_result = None
+    
+            #conditions are applied one by one, so it is better to share the buffers among conditions
             if report_conditions:
                 #apply the conditions, try to share the np array among conditions to save memory
-                previous_item = None
-                for cond in report_conditions:
-                    #each condition is a tuple(column, operator, value), value is dependent on operator and column type
-                    col = column_map[cond[0]]
-
-                    #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
-                    #map the value to internal value used by dataset if it is not mapped in the driver
-                    if cond[3]:
-                        #value is not mapped or partly mapped.
-                        if isinstance(cond[2],list):
-                            for i in cond[3]:
+                for item in report_conditions:
+                    col = column_map[item[0]]
+                    col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None)
+                    if datatransformer.is_int_type(col_type[0]):
+                        if int_buffer:
+                            int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
+                        else:
+                            int_buffer = [col_type,None]
+                        data_buffers[id(item)] = int_buffer
+                    elif datatransformer.is_float_type(col_type[0]):
+                        if float_buffer:
+                            float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
+                        else:
+                            float_buffer = [col_type,None]
+                        data_buffers[id(item)] = float_buffer
+                    elif datatransformer.is_string_type(col_type[0]):
+                        if string_buffer:
+                            string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
+                        else:
+                            string_buffer = [col_type,None]
+                        data_buffers[id(item)] = string_buffer
+    
+            if report_group_by:
+                #group_by feature is required
+                #Use pandas to implement 'group by' feature, all dataset including columns in 'group by' and 'resultset' will be loaded into the memory.
+                #use the existing data buff if it already exist for some column
+                if data_buffers:
+                    closest_int_column = [None,None,None] #three members (the item with lower type, the item with exact type,the item with upper type), each memeber is None or list with 2 members:[ group_by or resultset item,col_type]
+                    closest_float_column = [None,None,None]
+                    closest_string_column = [None,None,None]
+                    for item in itertools.chain(report_group_by,resultset):
+                        colname = item[0] if isinstance(item,list) else item
+                        if colname == "*":
+                            continue
+                        col = column_map[colname]
+                        col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
+                        for is_func,data_buffer,closest_column in (
+                            (datatransformer.is_int_type,int_buffer,closest_int_column),
+                            (datatransformer.is_float_type,float_buffer,closest_float_column),
+                            (datatransformer.is_string_type,string_buffer,closest_string_column)):
+                            if is_func(col_type[0]):
+                                if data_buffer:
+                                    if closest_column[1] and closest_column[1][1] == data_buffer[0]:
+                                        #already match exactly
+                                        continue
+                                    elif data_buffer[0] == col_type:
+                                        #match exactly
+                                        closest_column[1] = [item,col_type]
+                                    else:
+                                        t = datatransformer.ceiling_type(data_buffer[0],col_type)
+                                        if t == data_buffer[0]:
+                                            #the buffer can hold the current group by column, group by column's type is less then buffer's type
+                                            #choose the column which is closest to buffer type
+                                            if closest_column[0]:
+                                                if datatransformer.bigger_type(closest_column[0][1],col_type) == col_type:
+                                                    closest_column[0][1] = [item,col_type]
+                                            else:
+                                                closest_column[0] = [item,col_type]
+                                        elif t == col_type:
+                                            #the group by column can hold the buffer data, group column's type is greater then buffer's type
+                                            #choose the column which is closest to buffer type
+                                            if closest_column[2]:
+                                                if datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
+                                                    closest_column[2][1] = [item,col_type]
+                                            else:
+                                                closest_column[2] = [item,col_type]
+                                        else:
+                                            #both the group by column and buff can't hold each other,the result type is greater then buffer's type and group by column type
+                                            #choose the column which is closest to buffer type except the current chosed column's type can hold buffer data
+                                            if closest_column[2]:
+                                                if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
+                                                    #the current chosed cloest column's type can hold buffer data
+                                                    continue
+                                                elif datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
+                                                    #the current chosed cloest column's type can't hold buffer data, choose the smaller type
+                                                    closest_column[2][1] = [item,col_type]
+                                            else:
+                                                closest_column[2] = [item,col_type]
+                                break
+    
+    
+    
+                    #choose the right column to share the data buffer chosed in report conditions
+                    for data_buffer,closest_column in (
+                        (int_buffer,closest_int_column),
+                        (float_buffer,closest_float_column),
+                        (string_buffer,closest_string_column)):
+                        if closest_column[1]:
+                            #one column in group_by has the same type as int_buffer
+                            data_buffers[id(closest_column[1][0])] = data_buffer
+                        elif closest_column[2] and datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
+                            #one column in group_by has a data type which can holder the data type of the buffer, use the group-by's data type as buffer's data type
+                            data_buffer[0] = closest_column[2][1]
+                            data_buffers[id(closest_column[2][0])] = data_buffer
+                        elif closest_column[0] and datatransformer.ceiling_type(data_buffer[0],closest_column[0][1]) == closest_column[0][1]:
+                            #the data type of the buffer can hold the data type of group-by column
+                            data_buffers[id(closest_column[0][0])] = data_buffer
+                        elif closest_column[0]:
+                            #choose the ceiling type of the closest smaller type and buffer type
+                            data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[0][1])
+                            data_buffers[id(closest_int_column[0][0])] = data_buffer
+                        elif closest_column[2]:
+                            #choose the ceiling type of the closest greater type and buffer type
+                            data_buffer[0] = datatransformer.ceiling_type(data_buffer[0],closest_column[2][1])
+                            data_buffers[id(closest_column[2][0])] = data_buffer
+    
+            elif isinstance(resultset,(list,tuple)):
+                #group_by feature is not required.
+                #perform the statistics one by one, try best to share the data buffer
+                for item in resultset:
+                    if item[0] == "*":
+                        continue
+                    col = column_map[item[0]]
+                    col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
+                    if datatransformer.is_int_type(col_type[0]):
+                        if int_buffer:
+                            int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
+                        else:
+                            int_buffer = [col_type,None]
+                        data_buffers[id(item)] = int_buffer
+                    elif datatransformer.is_float_type(col_type[0]):
+                        if float_buffer:
+                            float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
+                        else:
+                            float_buffer = [col_type,None]
+                        data_buffers[id(item)] = float_buffer
+                    elif datatransformer.is_string_type(col_type[0]):
+                        if string_buffer:
+                            string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
+                        else:
+                            string_buffer = [col_type,None]
+                        data_buffers[id(item)] = string_buffer
+    
+            with h5py.File(data_index_file,'r') as index_h5:
+                #filter the dataset
+                if report_conditions:
+                    #apply the conditions, try to share the np array among conditions to save memory
+                    previous_item = None
+                    for cond in report_conditions:
+                        #each condition is a tuple(column, operator, value), value is dependent on operator and column type
+                        col = column_map[cond[0]]
+    
+                        #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                        #map the value to internal value used by dataset if it is not mapped in the driver
+                        if cond[3]:
+                            #value is not mapped or partly mapped.
+                            if isinstance(cond[2],list):
+                                for i in cond[3]:
+                                    if col[EXECUTOR_TRANSFORMER]:
+                                        #need transformation
+                                        if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
+                                            #is enum type
+                                            cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                                            if not cond[2]:
+                                                #searching value doesn't exist
+                                                cond[2][i] = None
+                                                break
+                                        else:
+                                            if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
+                                                cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
+                                            else:
+                                                cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                                if any(v is None for v in cond[2]):
+                                    #remove the None value from value list
+                                    cond[2] = [v for v in cond[2] if v is not None]
+                                if not cond[2]:
+                                    #searching value doesn't exist
+                                    cond_result = None
+                                    break
+                            else:
                                 if col[EXECUTOR_TRANSFORMER]:
                                     #need transformation
                                     if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
                                         #is enum type
-                                        cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                                        cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
                                         if not cond[2]:
                                             #searching value doesn't exist
-                                            cond[2][i] = None
+                                            cond_result = None
                                             break
                                     else:
                                         if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
-                                            cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
+                                            cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
                                         else:
-                                            cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-                            if any(v is None for v in cond[2]):
-                                #remove the None value from value list
-                                cond[2] = [v for v in cond[2] if v is not None]
-                            if not cond[2]:
-                                #searching value doesn't exist
-                                cond_result = None
-                                break
+                                            cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+    
+                        if not previous_item or previous_item[0] != cond[0]:
+                            #condition is applied on different column
+                            try:
+                                buff = data_buffers.pop(id(cond))
+                                buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
+                                column_data = buff[1]
+                            except KeyError as ex:
+                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
+                            
+                            index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                        if cond_result is None:
+                            cond_result = operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
                         else:
-                            if col[EXECUTOR_TRANSFORMER]:
-                                #need transformation
-                                if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
-                                    #is enum type
-                                    cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-                                    if not cond[2]:
-                                        #searching value doesn't exist
-                                        cond_result = None
-                                        break
-                                else:
-                                    if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
-                                        cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
-                                    else:
-                                        cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-
-                    if not previous_item or previous_item[0] != cond[0]:
-                        #condition is applied on different column
-                        try:
-                            buff = data_buffers.pop(id(cond))
-                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                            column_data = buff[1]
-                        except KeyError as ex:
-                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
-                        
-                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                            cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
+    
+                        previous_item = cond
+    
+                    column_data = None
+    
                     if cond_result is None:
-                        cond_result = operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
+                        filtered_rows = 0
                     else:
-                        cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
-
-                    previous_item = cond
-
-                column_data = None
-
-                if cond_result is None:
-                    filtered_rows = 0
+                        filtered_rows = np.count_nonzero(cond_result)
                 else:
-                    filtered_rows = np.count_nonzero(cond_result)
-            else:
-                filtered_rows = dataset_size
+                    filtered_rows = dataset_size
+    
+    
+                if resultset == "__details__":
+                    #return the detail logs
+                    if filtered_rows == 0:
+                        logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
+                        return [(data[0],data[1],0,None)]
+                    else:
+                        report_file_folder = os.path.join(report_cache_dir,"tmp")
+                        utils.mkdir(report_file_folder)
+                        report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
+                        if filtered_rows == dataset_size:
+                            #all logs are returned
+                            #unlikely to happen.
+                            shutil.copyfile(data_file,report_file)
+                            return [(data[0],data[1],dataset_size,report_file)]
+                        else:
+                            report_size = np.count_nonzero(cond_result)
+                            indexes = np.flatnonzero(cond_result)
+                            with open(report_file,'w') as report_f:
+                                reportwriter = csv.writer(report_f)
+                                reportwriter.writerows(report_details(data_file,indexes))
+                            return [(data[0],data[1],report_size,report_file)]
+    
+                if report_group_by :
+                    #'group by' enabled
+                    #create pandas dataframe
+                    if filtered_rows == 0:
+                        result = []
+                    else:
+                        df_datas = collections.OrderedDict()
+                        if report_type == HOURLY_REPORT:
+                            df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
+                        elif report_type == DAILY_REPORT:
+                            df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
+        
+                        for item in itertools.chain(report_group_by,resultset):
+                            colname = item[0] if isinstance(item,(list,tuple)) else item
+                            if colname == "*":
+                                continue
+                            col = column_map[colname]
+                            col_type = col[EXECUTOR_DTYPE]
+                            try:
+                                buff = data_buffers.pop(id(item))
+                                buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
+                                column_data = buff[1]
+                            except KeyError as ex:
+                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                
+                            index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                            if filtered_rows == dataset_size:
+                                #all records are satisfied with the report condition
+                                df_datas[colname] = column_data
+                            else:
+                                df_datas[colname] = column_data[cond_result]
+        
+                        #create pandas dataframe
+                        df = pd.DataFrame(df_datas)
+                        #get the group object
+                        if report_type:
+                            df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
+                        else:
+                            df_group = df.groupby(report_group_by,group_keys=True)
+                        #perfrom the statistics on group
+                        #populate the statistics map
+                        statics_map = collections.OrderedDict()
+                        for item in resultset:
+                            if item[0] == "*":
+                                #use the first group by column to calculate the count
+                                colname = report_group_by[0]
+                            else:
+                                colname = item[0]
+                            if colname in statics_map:
+                                statics_map[colname].append(operation.get_agg_func(item[1]))
+                            else:
+                                statics_map[colname] = [operation.get_agg_func(item[1])]
+                        df_result = df_group.agg(statics_map)
+    
+                        result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
+                else:
+                    #no 'group by', return the statistics data.
+                    if filtered_rows == 0:
+                        report_data = [0] * len(resultset)
+                        if report_type == HOURLY_REPORT:
+                            report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
+                    else:
+                        if report_type == HOURLY_REPORT:
+                            report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
+                        else:
+                            report_data = []
+                        previous_item = None
+                        for item in resultset:
+                            if not previous_item or previous_item[0] != item[0]:
+                                #new column should be loaded
+                                previous_item = item
+                                if item[0] != "*":
+                                    col = column_map[item[0]]
+                                    col_type = col[EXECUTOR_DTYPE]
+                                    try:
+                                        buff = data_buffers.pop(id(item))
+                                        buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
+                                        column_data = buff[1]
+                                    except KeyError as ex:
+                                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                
+                                    index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+        
+                            if item[0] == "*":
+                                report_data.append(filtered_rows)
+                            elif filtered_rows == dataset_size:
+                                report_data.append(operation.get_func(col[2],item[1])(column_data))
+                            else:
+                                report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
+    
+                    if report_type == DAILY_REPORT:
+                        #return a dict to perform the function 'reducebykey'
+                        result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
+                    else:
+                        result = [report_data]
+                        
+                #logger.debug("Return the result from executor.reportid={0}, access log file={0}, result={2}".format(reportid,data[1],result))
+                return result
+        except ResourceNotFound as ex:
+            if datasetinfo and datasetinfo.get("ignore_missing_accesslogfile",False):
+                with database.Database(databaseurl).get_conn(True) as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("select status from datascience_report where id = {}".format(reportid))
+                        report_status = cursor.fetchone()[0]
+                        if report_status is None:
+                            report_status = {"message":str(ex)}
+                        elif report_status.get("message"):
+                            report_status["message"] = "{}\n{}".format(report_status.get("message"),str(ex))
+                        else:
+                            report_status["message"] = str(ex)
+                        cursor.execute("update datascience_report set status='{1}' where id = {0}".format(reportid,json.dumps(report_status)))
+                        conn.commit()
 
 
-            if resultset == "__details__":
-                #return the detail logs
-                if filtered_rows == 0:
-                    logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
+                if resultset == "__details__":
                     return [(data[0],data[1],0,None)]
                 else:
-                    report_file_folder = os.path.join(report_cache_dir,"tmp")
-                    utils.mkdir(report_file_folder)
-                    report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
-                    if filtered_rows == dataset_size:
-                        #all logs are returned
-                        #unlikely to happen.
-                        shutil.copyfile(data_file,report_file)
-                        return [(data[0],data[1],dataset_size,report_file)]
-                    else:
-                        report_size = np.count_nonzero(cond_result)
-                        indexes = np.flatnonzero(cond_result)
-                        with open(report_file,'w') as report_f:
-                            reportwriter = csv.writer(report_f)
-                            reportwriter.writerows(report_details(data_file,indexes))
-                        return [(data[0],data[1],report_size,report_file)]
-
-            if report_group_by :
-                #'group by' enabled
-                #create pandas dataframe
-                if filtered_rows == 0:
-                    result = []
-                else:
-                    df_datas = collections.OrderedDict()
-                    if report_type == HOURLY_REPORT:
-                        df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
-                    elif report_type == DAILY_REPORT:
-                        df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
-    
-                    for item in itertools.chain(report_group_by,resultset):
-                        colname = item[0] if isinstance(item,(list,tuple)) else item
-                        if colname == "*":
-                            continue
-                        col = column_map[colname]
-                        col_type = col[EXECUTOR_DTYPE]
-                        try:
-                            buff = data_buffers.pop(id(item))
-                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                            column_data = buff[1]
-                        except KeyError as ex:
-                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
-                            
-                        index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                        if filtered_rows == dataset_size:
-                            #all records are satisfied with the report condition
-                            df_datas[colname] = column_data
-                        else:
-                            df_datas[colname] = column_data[cond_result]
-    
-                    #create pandas dataframe
-                    df = pd.DataFrame(df_datas)
-                    #get the group object
-                    if report_type:
-                        df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
-                    else:
-                        df_group = df.groupby(report_group_by,group_keys=True)
-                    #perfrom the statistics on group
-                    #populate the statistics map
-                    statics_map = collections.OrderedDict()
-                    for item in resultset:
-                        if item[0] == "*":
-                            #use the first group by column to calculate the count
-                            colname = report_group_by[0]
-                        else:
-                            colname = item[0]
-                        if colname in statics_map:
-                            statics_map[colname].append(operation.get_agg_func(item[1]))
-                        else:
-                            statics_map[colname] = [operation.get_agg_func(item[1])]
-                    df_result = df_group.agg(statics_map)
-
-                    result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
+                    return []
             else:
-                #no 'group by', return the statistics data.
-                if filtered_rows == 0:
-                    report_data = [0] * len(resultset)
-                    if report_type == HOURLY_REPORT:
-                        report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
-                else:
-                    if report_type == HOURLY_REPORT:
-                        report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
-                    else:
-                        report_data = []
-                    previous_item = None
-                    for item in resultset:
-                        if not previous_item or previous_item[0] != item[0]:
-                            #new column should be loaded
-                            previous_item = item
-                            if item[0] != "*":
-                                col = column_map[item[0]]
-                                col_type = col[EXECUTOR_DTYPE]
-                                try:
-                                    buff = data_buffers.pop(id(item))
-                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                    column_data = buff[1]
-                                except KeyError as ex:
-                                    column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
-                            
-                                index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-    
-                        if item[0] == "*":
-                            report_data.append(filtered_rows)
-                        elif filtered_rows == dataset_size:
-                            report_data.append(operation.get_func(col[2],item[1])(column_data))
-                        else:
-                            report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
+                raise 
 
-                if report_type == DAILY_REPORT:
-                    #return a dict to perform the function 'reducebykey'
-                    result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
-                else:
-                    result = [report_data]
-                    
-            #logger.debug("Return the result from executor.reportid={0}, access log file={0}, result={2}".format(reportid,data[1],result))
-            return result
     return analysis
 
 DRIVER_COLUMNID=0
@@ -1425,6 +1448,15 @@ def run():
         report_cache_dir = os.path.join(cache_dir,"report")
         report_file_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
         utils.mkdir(report_file_folder)
+
+        #refetch the report status from database again
+        with database.Database(databaseurl).get_conn(True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("select status from datascience_report where id = {}".format(reportid))
+                report_status = cursor.fetchone()[0]
+                if report_status is None:
+                    report_status = {}
+
         if resultset == "__details__":
             result = rdd.collect()
             result.sort()

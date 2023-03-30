@@ -3,6 +3,7 @@ import logging
 from azure.storage.blob import ContainerClient
 
 from .base import ResourceHarvester
+from .exceptions import ResourceNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class AzureBlobStorageHarvester(ResourceHarvester):
         """
         logger.debug("Try to download the file({}) from blob storage to local file({})".format(path,filename))
         if not self._get_blob_client(path).exists():
-            raise Exception("The file ({}) does not exist in blob storage".format(path))
+            raise ResourceNotFound(path)
 
         offset = 0
         blob_size = self._get_blob_client(path).get_blob_properties().size
