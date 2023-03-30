@@ -397,7 +397,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                         #this is not the first run, and this column no nedd to process again
                                                         continue
     
-                                                    column_size = column_columninfo.get("size") if column_columninfo else 64
+                                                    column_size = column_columninfo.get("size",64) if column_columninfo else 64
                         
                                                     #create the buffer and hdf5 dataset for column
                                                     if column_name not in indexdatasets:
@@ -415,10 +415,21 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                         else:
                                                             indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
                                                     else:
-                                                        #remove non printable characters
-                                                        value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
-                                                        if len(value) >= column_size:
-                                                            value = value[0:column_size]
+                                                        if datatransformer.is_int_type(column_dtype):
+                                                            try:
+                                                                value = int(value.strip()) if value else 0
+                                                            except:
+                                                                value = 0
+                                                        elif datatransformer.is_float_type(column_dtype):
+                                                            try:
+                                                                value = float(value.strip()) if value else 0
+                                                            except:
+                                                                value = 0
+                                                        else:
+                                                            #remove non printable characters
+                                                            value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                            if len(value) >= column_size:
+                                                                value = value[0:column_size]
     
                                                         indexbuffs[column_name][indexbuff_index] = value
                         
