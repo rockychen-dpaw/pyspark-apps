@@ -167,7 +167,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
             cache_folder = os.path.join(data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
             utils.mkdir(cache_folder)
     
-            harvester = None
+            resource_harvester = None
             #get the cached local data file and data index file
             data_file = os.path.join(cache_folder,data[1])
             data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[1]))
@@ -300,13 +300,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                             src_data_file = None
                             if not os.path.exists(data_file):
                                 #local data file doesn't exist, download the source file if required as src_data_file
-                                harvester = get_harvester(datasetinfo)
-                                if harvester.is_local():
-                                    src_data_file = harvester.get_abs_path(data[1])
+                                resource_harvester = get_harvester(datasetinfo)
+                                if resource_harvester.is_local():
+                                    src_data_file = resource_harvester.get_abs_path(data[1])
                                 else:
                                     with tempfile.NamedTemporaryFile(prefix="datascience_ngx_log",delete=False) as f:
                                         src_data_file = f.name
-                                    harvester.saveas(data[1],src_data_file)
+                                    resource_harvester.saveas(data[1],src_data_file)
     
                             #generate index file
                             tmp_index_file = "{}.tmp".format(data_index_file)
@@ -448,7 +448,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                         #rename the tmp data file to data file if required
                                         os.rename(tmp_data_file,data_file)
     
-                                        if not harvester.is_local():
+                                        if not resource_harvester.is_local():
                                             #src data file is a temp file , delete it
                                             utils.remove_file(src_data_file)
                                             pass
