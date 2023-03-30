@@ -216,8 +216,8 @@ def number2group(value,databaseurl=None,columnid=None):
         raise Exception("Missing column id")
     if not databaseurl:
         raise Exception("Missing database url")
-
-    value = int(value.strip()) if (value and value.strip()) else None
+    if isinstance(value,str):
+        value = int(value.strip()) if (value and value.strip()) else None
 
     if columnid not in enum_dicts:
         enum_dicts[columnid] = []
