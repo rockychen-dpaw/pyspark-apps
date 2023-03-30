@@ -388,6 +388,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                         #generate the dataset for each index column
                                         for columnindex,reportcolumns in allreportcolumns.items():
                                             value = item[columnindex]
+
                                             for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
                                                 if  not column_filterable and not column_groupable and not column_statistical:
                                                     #no need to create index 
@@ -412,6 +413,8 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                     else:
                                                         indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
                                                 else:
+                                                    #remove non printable characters
+                                                    value = value.encode("ascii",errors="ignore").decode()
                                                     indexbuffs[column_name][indexbuff_index] = value.strip() if value else ""
                     
                                                 if indexbuff_index == buffer_size - 1:
