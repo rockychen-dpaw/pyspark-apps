@@ -158,10 +158,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
         if not cache_dir:
             raise Exception("Nissing the configuration 'cache_dir'")
 
+        data_cache_dir = os.path.join(cache_dir,"data")
+        report_cache_dir = os.path.join(cache_dir,"report")
+
         dataset_time = timezone.parse(data[0],"%Y%m%d%H")
         logger.debug("dataset_time = {}, str={}".format(dataset_time,data[0]))
 
-        cache_folder = os.path.join(cache_dir,dataset_time.strftime("%Y-%m-%d"))
+        cache_folder = os.path.join(data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
         utils.mkdir(cache_folder)
 
         harvester = None
@@ -760,22 +763,22 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                 if filtered_rows == 0:
                     logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
                     return [(data[0],data[1],0,None)]
-                elif filtered_rows == dataset_size:
-                    #all logs are returned
-                    #unlikely to happen.
-                    report_file = os.path.join(cache_dir,"reports","{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
-                    shutil.copyfile(data_file,report_file)
-                    return [(data[0],data[1],dataset_size,report_file)]
                 else:
-                    report_size = np.count_nonzero(cond_result)
-                    indexes = np.flatnonzero(cond_result)
-                    report_file_folder = os.path.join(cache_dir,"reports","tmp")
+                    report_file_folder = os.path.join(report_cache_dir,"tmp")
                     utils.mkdir(report_file_folder)
                     report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
-                    with open(report_file,'w') as report_f:
-                        reportwriter = csv.writer(report_f)
-                        reportwriter.writerows(report_details(data_file,indexes))
-                    return [(data[0],data[1],report_size,report_file)]
+                    if filtered_rows == dataset_size:
+                        #all logs are returned
+                        #unlikely to happen.
+                        shutil.copyfile(data_file,report_file)
+                        return [(data[0],data[1],dataset_size,report_file)]
+                    else:
+                        report_size = np.count_nonzero(cond_result)
+                        indexes = np.flatnonzero(cond_result)
+                        with open(report_file,'w') as report_f:
+                            reportwriter = csv.writer(report_f)
+                            reportwriter.writerows(report_details(data_file,indexes))
+                        return [(data[0],data[1],report_size,report_file)]
 
             if report_group_by :
                 #'group by' enabled
@@ -1409,13 +1412,14 @@ def run():
 
         #init the folder to place the report file
         cache_dir = dataset_info.get("cache")
-        report_file_folder = os.path.join(cache_dir,"reports",report_start.strftime("%Y-%m-%d"))
+        report_cache_dir = os.path.join(cache_dir,"report")
+        report_file_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
         utils.mkdir(report_file_folder)
         if resultset == "__details__":
             result = rdd.collect()
             result.sort()
             if dataset_info.get("data_header"):
-                report_header_file = os.path.join(cache_dir,"nginxaccesslog-report_header.csv")
+                report_header_file = os.path.join(report_cache_dir,"nginxaccesslog-report_header.csv")
                 if not os.path.exists(report_header_file):
                     #report_header_file does not exist, create it
                     with open(report_header_file,'w') as f:
@@ -1610,7 +1614,22 @@ def run():
                     cursor.execute("update datascience_report set status='{1}',exec_end='{2}' where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
                     conn.commit()
 
-
+        if report_status and report_status["status"] == "Succeed":
+            #clean the expired cache
+            cache_dir = dataset_info.get("cache") if dataset_info else None
+            if cache_dir: 
+                cache_timeout = dataset_info.get("cache_timeout",28) #in days
+                logger.debug("cache timeout = {}".format(cache_timeout))
+                if cache_timeout > 0:
+                    data_cache_dir = os.path.join(cache_dir,"data")
+                    folders = [os.path.join(data_cache_dir,f) for f in os.listdir(data_cache_dir) if os.path.isdir(os.path.join(data_cache_dir,f))]
+                    logger.debug("Found {} cache folders".format(len(folders)))
+                    if len(folders) > cache_timeout:
+                        #some cached data files are expired
+                        folders.sort()
+                        for i in range(len(folders) - cache_timeout):
+                            logger.debug("Remove the expired cached data file folder({})".format(folders[i]))
+                            utils.remove_dir(folders[i])
 
 if __name__ == "__main__":
     run()

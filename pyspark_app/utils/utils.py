@@ -1,7 +1,9 @@
 import subprocess
+import traceback
 import logging
 import inspect
 import psutil
+import shutil
 import  os
 import csv
 import socket
@@ -65,7 +67,20 @@ def remove_file(f):
     try:
         os.remove(f)
     except:
+        logger.error("Failed to remove file({}).{}".format(f,traceback.format_exc()))
         pass
+
+def remove_dir(d):
+    if not d: 
+        return
+
+    try:
+        shutil.rmtree(d)
+    except:
+        logger.error("Failed to remove the folder({}).{}".format(d,traceback.format_exc()))
+        pass
+
+
 
 def file_mtime(f):
     return timezone.localtime(datetime.fromtimestamp(os.path.getmtime(f)))
