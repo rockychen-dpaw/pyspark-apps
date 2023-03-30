@@ -888,7 +888,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                         
                 #logger.debug("Return the result from executor.reportid={0}, access log file={0}, result={2}".format(reportid,data[1],result))
                 return result
-        except ResourceNotFound as ex:
+        except harvester.exceptions.ResourceNotFound as ex:
             if datasetinfo and datasetinfo.get("ignore_missing_accesslogfile",False):
                 with database.Database(databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
