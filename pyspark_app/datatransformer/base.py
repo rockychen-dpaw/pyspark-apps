@@ -28,7 +28,7 @@ TIMEDELTA = 404
 
 _DATA_TYPES = {
     BOOL:("bool","bool"),
-    STRING:("S64",h5py.string_dtype(encoding='utf-8')),
+    STRING:(lambda columninfo:"S{}".format(columninfo.get("size",64)),h5py.string_dtype(encoding='utf-8')),
     EMAIL:("S64",h5py.string_dtype(encoding='ascii')),
     DATETIME:("S32",h5py.string_dtype(encoding='ascii')),
     INT8:("int8","int8"),
@@ -46,11 +46,18 @@ _DATA_TYPES = {
     FLOAT128:("float128""float128")
 }
 
-def get_np_type(t):
-    return _DATA_TYPES[t][0]
+def get_np_type(t,columninfo):
+    if callable(_DATA_TYPES[t][0]):
+        return _DATA_TYPES[t][0](columninfo)
+    else:
+        return _DATA_TYPES[t][0]
 
-def get_hdf5_type(t):
-    return _DATA_TYPES[t][1]
+
+def get_hdf5_type(t,columninfo):
+    if callable(_DATA_TYPES[t][1]):
+        return _DATA_TYPES[t][1](columninfo)
+    else:
+        return _DATA_TYPES[t][1]
 
 def is_int_type(t):
     return t >= 100 and t < 200

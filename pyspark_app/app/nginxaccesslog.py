@@ -402,8 +402,8 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                     if column_name in tmp_h5:
                                                         indexdatasets[column_name] = tmp_h5[column_name]
                                                     else:
-                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype))
-                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype))
+                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
+                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_columninfo))
                     
                                                 #get the index data for each index column
                                                 if column_transformer:
