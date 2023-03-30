@@ -403,7 +403,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                         indexdatasets[column_name] = tmp_h5[column_name]
                                                     else:
                                                         indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
-                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_columninfo))
+                                                    indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_columninfo.get("size") if column_columninfo else None))
                     
                                                 #get the index data for each index column
                                                 if column_transformer:
@@ -556,21 +556,21 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                 col_type = col[EXECUTOR_DTYPE]
                 if datatransformer.is_int_type(col_type):
                     if int_buffer:
-                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
+                        int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],(col_type,None))
                     else:
-                        int_buffer = [col_type,None]
+                        int_buffer = [(col_type,None),None]
                     data_buffers[id(item)] = int_buffer
                 elif datatransformer.is_float_type(col_type):
                     if float_buffer:
-                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
+                        float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],(col_type,None))
                     else:
-                        float_buffer = [col_type,None]
+                        float_buffer = [(col_type,None),None]
                     data_buffers[id(item)] = float_buffer
                 elif datatransformer.is_string_type(col_type):
                     if string_buffer:
-                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
+                        string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],(col_type,col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None))
                     else:
-                        string_buffer = [col_type,None]
+                        string_buffer = [(col_type,col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None),None]
                     data_buffers[id(item)] = string_buffer
 
         if report_group_by:
@@ -586,12 +586,12 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                     if colname == "*":
                         continue
                     col = column_map[colname]
-                    col_type = col[EXECUTOR_DTYPE]
+                    col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
                     for is_func,data_buffer,closest_column in (
                         (datatransformer.is_int_type,int_buffer,closest_int_column),
                         (datatransformer.is_float_type,float_buffer,closest_float_column),
                         (datatransformer.is_string_type,string_buffer,closest_string_column)):
-                        if is_func(col_type):
+                        if is_func(col_type[0]):
                             if data_buffer:
                                 if closest_column[1] and closest_column[1][1] == data_buffer[0]:
                                     #already match exactly
@@ -602,18 +602,18 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                 else:
                                     t = datatransformer.ceiling_type(data_buffer[0],col_type)
                                     if t == data_buffer[0]:
-                                        #the int_buffer can hold the current report set column, resultset column's type is less then int_buffer's type
-                                        #choose the column which is closest to int_buffer type
+                                        #the buffer can hold the current group by column, group by column's type is less then buffer's type
+                                        #choose the column which is closest to buffer type
                                         if closest_column[0]:
-                                            if closest_column[0][1] < col_type:
+                                            if datatransformer.bigger_type(closest_column[0][1],col_type) == col_type:
                                                 closest_column[0][1] = [item,col_type]
                                         else:
                                             closest_column[0] = [item,col_type]
                                     elif t == col_type:
-                                        #the resultset column can hold the int_buffer data, resultset column's type is greater then int_buffer's type
-                                        #choose the column which is closest to int_buffer type
+                                        #the group by column can hold the buffer data, group column's type is greater then buffer's type
+                                        #choose the column which is closest to buffer type
                                         if closest_column[2]:
-                                            if closest_column[2][1] > col_type:
+                                            if datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
                                                 closest_column[2][1] = [item,col_type]
                                         else:
                                             closest_column[2] = [item,col_type]
@@ -624,7 +624,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                             if datatransformer.ceiling_type(data_buffer[0],closest_column[2][1]) == closest_column[2][1]:
                                                 #the current chosed column's type can hold int_buffer data
                                                 continue
-                                            elif closest_column[2][1] > col_type:
+                                            elif datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
                                                 closest_column[2][1] = [item,col_type]
                                         else:
                                             closest_column[2] = [item,col_type]
@@ -662,20 +662,20 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                 if item[0] == "*":
                     continue
                 col = column_map[item[0]]
-                col_type = col[EXECUTOR_DTYPE]
-                if datatransformer.is_int_type(col_type):
+                col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
+                if datatransformer.is_int_type(col_type[0]):
                     if int_buffer:
                         int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
                     else:
                         int_buffer = [col_type,None]
                     data_buffers[id(item)] = int_buffer
-                elif datatransformer.is_float_type(col_type):
+                elif datatransformer.is_float_type(col_type[0]):
                     if float_buffer:
                         float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
                     else:
                         float_buffer = [col_type,None]
                     data_buffers[id(item)] = float_buffer
-                elif datatransformer.is_string_type(col_type):
+                elif datatransformer.is_string_type(col_type[0]):
                     if string_buffer:
                         string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
                     else:
@@ -738,10 +738,10 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                         #condition is applied on different column
                         try:
                             buff = data_buffers.pop(id(cond))
-                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
+                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
                             column_data = buff[1]
                         except KeyError as ex:
-                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE]))
+                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
                         
                         index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                     if cond_result is None:
@@ -803,10 +803,10 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                         col_type = col[EXECUTOR_DTYPE]
                         try:
                             buff = data_buffers.pop(id(item))
-                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
+                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
                             column_data = buff[1]
                         except KeyError as ex:
-                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
+                            column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
                             
                         index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                         if filtered_rows == dataset_size:
@@ -859,10 +859,10 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                 col_type = col[EXECUTOR_DTYPE]
                                 try:
                                     buff = data_buffers.pop(id(item))
-                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(buff[0]))
+                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
                                     column_data = buff[1]
                                 except KeyError as ex:
-                                    column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type))
+                                    column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
                             
                                 index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
     

@@ -28,7 +28,7 @@ TIMEDELTA = 404
 
 _DATA_TYPES = {
     BOOL:("bool","bool"),
-    STRING:(lambda columninfo:"S{}".format(columninfo.get("size",64)),h5py.string_dtype(encoding='utf-8')),
+    STRING:(lambda size:"S{}".format(size),h5py.string_dtype(encoding='utf-8')),
     EMAIL:("S64",h5py.string_dtype(encoding='ascii')),
     DATETIME:("S32",h5py.string_dtype(encoding='ascii')),
     INT8:("int8","int8"),
@@ -46,16 +46,16 @@ _DATA_TYPES = {
     FLOAT128:("float128""float128")
 }
 
-def get_np_type(t,columninfo):
+def get_np_type(t,size=None):
     if callable(_DATA_TYPES[t][0]):
-        return _DATA_TYPES[t][0](columninfo)
+        return _DATA_TYPES[t][0](size)
     else:
         return _DATA_TYPES[t][0]
 
 
-def get_hdf5_type(t,columninfo):
+def get_hdf5_type(t,size=None):
     if callable(_DATA_TYPES[t][1]):
-        return _DATA_TYPES[t][1](columninfo)
+        return _DATA_TYPES[t][1](size or 64)
     else:
         return _DATA_TYPES[t][1]
 
@@ -72,11 +72,11 @@ def is_string_type(t):
     return t >= 300 and t < 400
 
 def ceiling_type(t1,t2):
-    if is_number_type(t1) and is_number_type(t2):
+    if is_number_type(t1[0]) and is_number_type(t2[0]):
         if t1 == t2:
             return t1
-        t1_np = get_np_type(t1)
-        t2_np = get_np_type(t2)
+        t1_np = get_np_type(*t1)
+        t2_np = get_np_type(*t2)
 
         if t1_np.endswith(t2_np):
             return t1 + 1
@@ -84,9 +84,19 @@ def ceiling_type(t1,t2):
             return t2 + 1
         else:
             return t2 if t2 > t1 else t1
-    elif is_string_type(t1) and is_string_type(t2):
-        t1_size = int(get_np_type(t1)[1:])
-        t2_size = int(get_np_type(t2)[1:])
+    elif is_string_type(t1[0]) and is_string_type(t2[0]):
+        t1_size = int(get_np_type(*t1)[1:])
+        t2_size = int(get_np_type(*t2)[1:])
+        return t1 if t1_size >= t2_size else t2
+    else:
+        raise Exception("Not support,t1={},t2={}".format(get_np_type(t1),get_np_type(t2)))
+    
+def bigger_type(t1,t2):
+    if is_number_type(t1[0]) and is_number_type(t2[0]):
+        return t1 if t1[0] >= t2[0] else t2
+    elif is_string_type(t1[0]) and is_string_type(t2[0]):
+        t1_size = int(get_np_type(*t1)[1:])
+        t2_size = int(get_np_type(*t2)[1:])
         return t1 if t1_size >= t2_size else t2
     else:
         raise Exception("Not support,t1={},t2={}".format(get_np_type(t1),get_np_type(t2)))
