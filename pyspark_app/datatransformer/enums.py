@@ -104,7 +104,7 @@ SET key='{1}'
 
 
 #domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*(:[0-9]+)?$")
-def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid_request=None,default_domain=None,context=None,domain_pattern=None):
+def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid=None,default_domain=None,context=None,domain_pattern=None):
     try:
         if not columnid:
             raise Exception("Missing column id")
@@ -121,13 +121,13 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
         else:
             domain_re = None
 
-        if is_invalid_request:
-            f_invalid_request = function_map.get(is_invalid_request)
-            if not f_invalid_request:
-                f_invalid_request = eval(is_invalid_request)
-                function_map[is_invalid_request] = f_invalid_request
+        if is_invalid:
+            f_invalid = function_map.get(is_invalid)
+            if not f_invalid:
+                f_invalid = eval(is_invalid)
+                function_map[is_invalid] = f_invalid
         else:
-            f_invalid_request = None
+            f_invalid = None
     
         key = key.strip() if (key and key.strip()) else ""
     
@@ -166,7 +166,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
                             context["reprocess"].add(columnname)
                             return data[0]
 
-                        if f_invalid_request and f_invalid_request(record):
+                        if f_invalid and f_invalid(key,record):
                             valid_domain = False
                     
                     #request a non-exist domain, maybe sent by hacker
