@@ -148,7 +148,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
         if domain_re and not domain_re.search(key):
             #not a valid domain
             if default_domain in enum_dicts:
-                return enum_dicts[default_domain]
+                return enum_dicts[columnid][default_domain]
             valid_domain = False
         else:
             valid_domain = True
@@ -182,7 +182,7 @@ SET key='{1}'
 """.format(columnid,default_domain)
                         cursor.execute(sql)
                         conn.commit()
-                        enum_dicts[default_domain] = 0
+                        enum_dicts[columnid][default_domain] = 0
                         return 0
                 except:
                     conn.rollback()
@@ -289,7 +289,7 @@ def str2group(value,databaseurl=None,columnid=None):
     raise Exception("Can't find the group of the value({1}) for column({0})".format(columnid,value))
 
 _city_reader = None
-def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal={"country":"DBCA","location":[115.861,-31.92]}):
+def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal={"country":"DBCA","location":[115.861,-31.92]},unrecoginized="unknown"):
     try:
         global _city_reader
         city = None
@@ -356,10 +356,25 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
                 return sequence
     except:
         logger.error("Failed to convert ip to enum.columnname={},ip={},city={}. {}".format(columnname,ip,city,traceback.format_exc()))
+        if unrecoginized in enum_dicts[columnid]:
+            return 0
+        else:
+            sql = """
+    INSERT INTO datascience_datasetenum 
+        (column_id,key,value,info) 
+    VALUES 
+        ({0},'{1}', 0,'{{}}')
+    ON CONFLICT (column_id,value) DO UPDATE 
+    SET key='{1}'
+    """.format(columnid,unrecoginized)
+            cursor.execute(sql)
+            conn.commit()
+            enum_dicts[columnid][unrecoginized] = 0
+            return 0
 
 
 _country_reader = None
-def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal="DBCA"):
+def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal="DBCA",unrecoginized="unknown"):
     try:
         global _country_reader
         country = None
@@ -417,6 +432,23 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                 return sequence
     except:
         logger.error("Failed to convert ip to enum.columnname={},ip={},country={}. {}".format(columnname,ip,country,traceback.format_exc()))
+        if unrecoginized in enum_dicts[columnid]:
+            return 0
+        else:
+            sql = """
+    INSERT INTO datascience_datasetenum 
+        (column_id,key,value,info) 
+    VALUES 
+        ({0},'{1}', 0,'{{}}')
+    ON CONFLICT (column_id,value) DO UPDATE 
+    SET key='{1}'
+    """.format(columnid,unrecoginized)
+            cursor.execute(sql)
+            conn.commit()
+            enum_dicts[columnid][unrecoginized] = 0
+            return 0
+
+
 
 
 def get_enum(key,databaseurl=None,columnid=None):
