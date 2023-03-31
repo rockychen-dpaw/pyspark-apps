@@ -352,7 +352,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                 logwriter = None
                                 databuff = None
     
-    
+                            created = timezone.timestamp()
                             with h5py.File(tmp_index_file,'a') as tmp_h5:
                                 while True:
                                     indexbuff_baseindex = 0
@@ -405,6 +405,9 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                                             indexdatasets[column_name] = tmp_h5[column_name]
                                                         else:
                                                             indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
+                                                        logger.debug("Set the attribute(created={1}) to dataset({0})".format(column_name,created))
+                                                        indexdatasets[column_name].attrs["created"] = created
+
                                                         indexbuffs[column_name] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
                         
                                                     #get the index data for each index column
@@ -491,10 +494,6 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                                         logger.debug("The columns({1}) are required to reprocess for report({0})".format(reportid,process_required_columns))
                                     else:
                                         #the data file has been processed. 
-                                        #set the attribute 'created' on datasets
-                                        for ds in indexdatasets.values():
-                                            ds.attrs["created"] = timezone.timestamp()
-    
                                         if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
                                             raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
                                         else:
