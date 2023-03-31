@@ -782,13 +782,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                 if resultset == "__details__":
                     #return the detail logs
                     if filtered_rows == 0:
-                        logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_procesesid(),data[1],report_conditions))
+                        logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_processid(),data[1],report_conditions))
                         return [(data[0],data[1],0,None)]
                     else:
                         report_file_folder = os.path.join(report_cache_dir,"tmp")
                         utils.mkdir(report_file_folder)
                         report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
-                        logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_procesesid(),data[1],report_conditions))
+                        logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_processid(),data[1],report_conditions))
                         if filtered_rows == dataset_size:
                             #all logs are returned
                             #unlikely to happen.
