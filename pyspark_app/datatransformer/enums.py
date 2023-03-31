@@ -8,7 +8,7 @@ import maxminddb
 import psycopg2
 
 from .. import database
-from ..utils import timezone
+from ..utils import timezone,get_processid
 from .. import settings
 
 
@@ -290,47 +290,48 @@ def str2group(value,databaseurl=None,columnid=None):
 
 _city_reader = None
 def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal={"country":"DBCA","location":[115.861,-31.92]},unrecoginized="unknown"):
-    try:
-        global _city_reader
-        city = None
-        if not _city_reader:
-            if not settings.GEOIP_DATABASE_HOME:
-                raise Exception("Please configure env var 'GEOIP_DATABASE_HOME'")
-            _city_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-City.mmdb'))
-    
-        result = _city_reader.get(ip)
-        if result:
-            if "city" in result:
-                city = "{0} {1}".format((result.get("country") or result["registered_country"])["names"]["en"].capitalize(),result["city"]["names"]["en"].capitalize())
-            else:
-                city = (result.get("country") or result["registered_country"])["names"]["en"].capitalize()
+    global _city_reader
+    city = None
+    if not _city_reader:
+        if not settings.GEOIP_DATABASE_HOME:
+            raise Exception("Please configure env var 'GEOIP_DATABASE_HOME'")
+        logger.debug("{} : Open GeoLite2-City.mmdb.".format(get_processid()))
+        _city_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-City.mmdb'))
 
-            info = {"location":[result["location"]["longitude"],result["location"]["latitude"]]}
-        elif "city" in internal:
-            city = "{0} {1}".format(internal["country"].capitalize(),internal["city"].capitalize())
-            info = {"location":internal.get("location",[115.861,-31.92])} 
+    result = _city_reader.get(ip)
+    if result:
+        if "city" in result:
+            city = "{0} {1}".format((result.get("country") or result["registered_country"])["names"]["en"].capitalize(),result["city"]["names"]["en"].capitalize())
         else:
-            city = internal["country"].capitalize()
-            info = {"location":internal.get("location",[115.861,-31.92])}
+            city = (result.get("country") or result["registered_country"])["names"]["en"].capitalize()
 
-        key = city.replace("'","\\'")
-    
-        if columnid not in enum_dicts:
-            enum_dicts[columnid] = {}
-            with database.Database(databaseurl).get_conn() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
-                    for row in cursor.fetchall():
-                        enum_dicts[columnid][row[0]] = row[1]
-        
-            if city in enum_dicts[columnid]:
-                return enum_dicts[columnid][city]
-        
-        elif city in enum_dicts[columnid]:
-            return enum_dicts[columnid][city]
+        info = {"location":[result["location"]["longitude"],result["location"]["latitude"]]}
+    elif "city" in internal:
+        city = "{0} {1}".format(internal["country"].capitalize(),internal["city"].capitalize())
+        info = {"location":internal.get("location",[115.861,-31.92])} 
+    else:
+        city = internal["country"].capitalize()
+        info = {"location":internal.get("location",[115.861,-31.92])}
 
+    key = city.replace("'","\\'")
+
+    if columnid not in enum_dicts:
+        enum_dicts[columnid] = {}
         with database.Database(databaseurl).get_conn() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
+                for row in cursor.fetchall():
+                    enum_dicts[columnid][row[0]] = row[1]
+    
+        if city in enum_dicts[columnid]:
+            return enum_dicts[columnid][city]
+    
+    elif city in enum_dicts[columnid]:
+        return enum_dicts[columnid][city]
+
+    with database.Database(databaseurl).get_conn() as conn:
+        with conn.cursor() as cursor:
+            try:
                 cursor.execute("select value from datascience_datasetenum where column_id = {} and key = E'{}'".format(columnid,key))
                 data = cursor.fetchone()
                 if data:
@@ -354,59 +355,60 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
         
                 enum_dicts[columnid][city] = sequence
                 return sequence
-    except:
-        logger.error("Failed to convert ip to enum.columnname={},ip={},city={}. {}".format(columnname,ip,city,traceback.format_exc()))
-        if unrecoginized in enum_dicts[columnid]:
-            return 0
-        else:
-            sql = """
-    INSERT INTO datascience_datasetenum 
-        (column_id,key,value,info) 
-    VALUES 
-        ({0},'{1}', 0,'{{}}')
-    ON CONFLICT (column_id,value) DO UPDATE 
-    SET key='{1}'
-    """.format(columnid,unrecoginized)
-            cursor.execute(sql)
-            conn.commit()
-            enum_dicts[columnid][unrecoginized] = 0
-            return 0
+            except:
+                logger.error("Failed to convert ip to enum.columnname={},ip={},city={}. {}".format(columnname,ip,city,traceback.format_exc()))
+                if unrecoginized in enum_dicts[columnid]:
+                    return 0
+                else:
+                    sql = """
+            INSERT INTO datascience_datasetenum 
+                (column_id,key,value,info) 
+            VALUES 
+                ({0},'{1}', 0,'{{}}')
+            ON CONFLICT (column_id,value) DO UPDATE 
+            SET key='{1}'
+            """.format(columnid,unrecoginized)
+                    cursor.execute(sql)
+                    conn.commit()
+                    enum_dicts[columnid][unrecoginized] = 0
+                    return 0
 
 
 _country_reader = None
 def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal="DBCA",unrecoginized="unknown"):
-    try:
-        global _country_reader
-        country = None
-        if not _country_reader:
-            if not settings.GEOIP_DATABASE_HOME:
-                raise Exception("Please configure env var 'GEOIP_DATABASE_HOME'")
-            _country_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-Country.mmdb'))
-    
-        result = _country_reader.get(ip)
-        if result:
-            country = (result.get("country") or result["registered_country"])["names"]["en"].capitalize().replace("'","\\\\'")
-        else:
-            country = internal.capitalize()
+    global _country_reader
+    country = None
+    if not _country_reader:
+        if not settings.GEOIP_DATABASE_HOME:
+            raise Exception("Please configure env var 'GEOIP_DATABASE_HOME'")
+        logger.debug("{} : Open GeoLite2-Country.mmdb.".format(get_processid()))
+        _country_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-Country.mmdb'))
 
-        key = country.replace("'","\\'")
-    
-        if columnid not in enum_dicts:
-            enum_dicts[columnid] = {}
-            with database.Database(databaseurl).get_conn() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
-                    for row in cursor.fetchall():
-                        enum_dicts[columnid][row[0]] = row[1]
-        
-            if country in enum_dicts[columnid]:
-                return enum_dicts[columnid][country]
-        
-        elif country in enum_dicts[columnid]:
-            return enum_dicts[columnid][country]
+    result = _country_reader.get(ip)
+    if result:
+        country = (result.get("country") or result["registered_country"])["names"]["en"].capitalize().replace("'","\\\\'")
+    else:
+        country = internal.capitalize()
 
+    key = country.replace("'","\\'")
+
+    if columnid not in enum_dicts:
+        enum_dicts[columnid] = {}
         with database.Database(databaseurl).get_conn() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
+                for row in cursor.fetchall():
+                    enum_dicts[columnid][row[0]] = row[1]
+    
+        if country in enum_dicts[columnid]:
+            return enum_dicts[columnid][country]
+    
+    elif country in enum_dicts[columnid]:
+        return enum_dicts[columnid][country]
+
+    with database.Database(databaseurl).get_conn() as conn:
+        with conn.cursor() as cursor:
+            try:
                 cursor.execute("select value from datascience_datasetenum where column_id = {} and key = E'{}'".format(columnid,key))
                 data = cursor.fetchone()
                 if data:
@@ -430,24 +432,24 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
         
                 enum_dicts[columnid][country] = sequence
                 return sequence
-    except:
-        logger.error("Failed to convert ip to enum.columnname={},ip={},country={}. {}".format(columnname,ip,country,traceback.format_exc()))
-        if unrecoginized in enum_dicts[columnid]:
-            return 0
-        else:
-            sql = """
-    INSERT INTO datascience_datasetenum 
-        (column_id,key,value,info) 
-    VALUES 
-        ({0},'{1}', 0,'{{}}')
-    ON CONFLICT (column_id,value) DO UPDATE 
-    SET key='{1}'
-    """.format(columnid,unrecoginized)
-            cursor.execute(sql)
-            conn.commit()
-            enum_dicts[columnid][unrecoginized] = 0
-            return 0
-
+            except:
+                logger.error("Failed to convert ip to enum.columnname={},ip={},country={}. {}".format(columnname,ip,country,traceback.format_exc()))
+                if unrecoginized in enum_dicts[columnid]:
+                    return 0
+                else:
+                    sql = """
+            INSERT INTO datascience_datasetenum 
+                (column_id,key,value,info) 
+            VALUES 
+                ({0},'{1}', 0,'{{}}')
+            ON CONFLICT (column_id,value) DO UPDATE 
+            SET key='{1}'
+            """.format(columnid,unrecoginized)
+                    cursor.execute(sql)
+                    conn.commit()
+                    enum_dicts[columnid][unrecoginized] = 0
+                    return 0
+        
 
 
 
@@ -503,10 +505,12 @@ def clean():
     global _city_reader
     if _country_reader:
         _country_reader.close()
+        logger.debug("{} : Close GeoLite2-Country.mmdb.".format(get_processid()))
         _country_reader = None
 
     if _city_reader:
         _city_reader.close()
+        logger.debug("{} : Close GeoLite2-City.mmdb.".format(get_processid()))
         _city_reader = None
 
 

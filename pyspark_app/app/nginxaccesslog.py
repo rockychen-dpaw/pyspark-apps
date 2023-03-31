@@ -782,12 +782,13 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                 if resultset == "__details__":
                     #return the detail logs
                     if filtered_rows == 0:
-                        logger.debug("No data found.file={}, report condition = {}".format(data[1],report_conditions))
+                        logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_procesesid(),data[1],report_conditions))
                         return [(data[0],data[1],0,None)]
                     else:
                         report_file_folder = os.path.join(report_cache_dir,"tmp")
                         utils.mkdir(report_file_folder)
                         report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
+                        logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_procesesid(),data[1],report_conditions))
                         if filtered_rows == dataset_size:
                             #all logs are returned
                             #unlikely to happen.
@@ -897,7 +898,7 @@ def analysis_factory(reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_
                     else:
                         result = [report_data]
                         
-                #logger.debug("Return the result from executor.reportid={0}, access log file={0}, result={2}".format(reportid,data[1],result))
+                logger.debug("{} : Return the result from executor.reportid={}, access log file={}".format(utils.get_processid(),reportid,data[1]))
                 return result
         except harvester.exceptions.ResourceNotFound as ex:
             if datasetinfo and datasetinfo.get("ignore_missing_accesslogfile",False):
