@@ -145,7 +145,7 @@ class ExecutorContext(object):
 
     DOWNLOADED = 1
     ALREADY_DOWNLOADED = 2
-    RESOURE_NOT_FOUND = -1
+    RESOURCE_NOT_FOUND = -1
     DOWNLOADING_BY_OTHERS = -2
 
     reportid = None
@@ -161,6 +161,7 @@ class ExecutorContext(object):
     indexdatasets = None
     indexbuffs = None
     databuff = None
+    buffer_size = None
 
     column_map = None
     report_data_buffers = None
@@ -183,6 +184,8 @@ class ExecutorContext(object):
             cls.indexdatasets = None
             cls.indexbuffs = None
             cls.databuff = None
+            cls.buffer_size = None
+            cls.databuffer_size = None
 
             cls.column_map = None
             cls.report_data_buffers = None
@@ -194,6 +197,8 @@ class ExecutorContext(object):
             cls.indexdatasets = None
             cls.indexbuffs = None
             cls.databuff = None
+            cls.buffer_size = None
+            cls.databuffer_size = None
 
             cls.column_map = None
             cls.report_data_buffers = None
@@ -274,8 +279,8 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                                                 columns[0][1] = d[5].get("exclude")
             
 
-            cache_folder = os.path.join(ExecutorContext.data_cache_dir,dataset_time.strftime("%Y-%m-%d")
-            utils.mkdir(cache_Colder)
+            cache_folder = os.path.join(ExecutorContext.data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
+            utils.mkdir(cache_folder)
     
             #get the cached local data file and data index file
             data_file = os.path.join(cache_folder,data[1])
@@ -320,7 +325,7 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
             if os.path.exists(data_index_file) and not process_required_columns:
                 #data index file is already downloaded
                 logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
-                return [*data,ExecutorContext.ALREADY_DOWNLOADED]
+                return [[*data,ExecutorContext.ALREADY_DOWNLOADED]]
             else:
                 #data index file does not exist, generate it.
                 #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
@@ -356,7 +361,7 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                         if os.path.exists(data_index_file) and not process_required_columns:
                             #data index file is already downloaded
                             logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
-                            return [*data,ExecutorContext.ALREADY_DOWNLOADED]
+                            return [[*data,ExecutorContext.ALREADY_DOWNLOADED]]
         
                             #generate the index file
                         #get the line counter of the file
@@ -597,15 +602,16 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                             utils.remove_file(tmp_index_file)
                         else:
                             os.rename(tmp_index_file,data_index_file)
-                    return [*data,ExecutorContext.DOWNLOADED]
+                    return [[*data,ExecutorContext.DOWNLOADED]]
                 except AlreadyLocked as ex:
                     logger.debug("The index file({1}) is downloading by other executor({0}).{}".format(data_file,data_index_file,ex))
-                    return [*data,ExecutorContext.DOWNLOADING_BY_OTHERS]
+                    return [[*data,ExecutorContext.DOWNLOADING_BY_OTHERS]]
         except harvester.exceptions.ResourceNotFound as ex:
             if datasetinfo and datasetinfo.get("ignore_missing_accesslogfile",False):
-                return [(data[0],data[1],ExecutorContext.RESOURCE_NOT_FOUND)]
+                return [[data[0],data[1],ExecutorContext.RESOURCE_NOT_FOUND]]
             else:
                 raise
+    return download
 
 report_condition_id = lambda i : 1000 + i
 report_group_by_id = lambda i:2000 + i
@@ -638,7 +644,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                     ExecutorContext.report_cache_dir = os.path.join(cache_dir,"report")
 
                 #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
-                if not ExecutorContext.column_map:
+                if ExecutorContext.column_map is None:
                     ExecutorContext.column_map = {}
                     with database.Database(databaseurl).get_conn(True) as conn:
                         with conn.cursor() as cursor:
@@ -655,7 +661,8 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
             cond_result = None
             column_data = None
     
-            if not ExecutorContext.report_data_buffers:
+            if ExecutorContext.report_data_buffers is None:
+                ExecutorContext.report_data_buffers = {}
                 #begin the perform the filtering, group by and statistics logic
                 #find the  share data buffer used for filtering ,group by and statistics
                 int_buffer = None
@@ -668,11 +675,10 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                 #conditions are applied one by one, so it is better to share the buffers among conditions
                 if report_conditions:
                     #apply the conditions, try to share the np array among conditions to save memory
-                    for i in range(len(report_conditions)):
                     i = -1
                     for item in report_conditions:
                         i += 1
-                        col = column_map[item[0]]
+                        col = ExecutorContext.column_map[item[0]]
                         col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if col[EXECUTOR_COLUMNINFO] else None)
                         if datatransformer.is_int_type(col_type[0]):
                             if int_buffer:
@@ -714,14 +720,14 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             colname = item[0] if isinstance(item,list) else item
                             if colname == "*":
                                 continue
-                            col = column_map[colname]
-                            col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
+                            col = ExecutorContext.column_map[colname]
                             for is_func,data_buffer,closest_column in (
                                 (datatransformer.is_int_type,int_buffer,closest_int_column),
                                 (datatransformer.is_float_type,float_buffer,closest_float_column),
                                 (datatransformer.is_string_type,string_buffer,closest_string_column)):
                                 if is_func(col_type[0]):
                                     if data_buffer:
+                                        col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
                                         if closest_column[1] and closest_column[1][1] == data_buffer[0]:
                                             #already match exactly
                                             continue
@@ -794,7 +800,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         i += 1
                         if item[0] == "*":
                             continue
-                        col = column_map[item[0]]
+                        col = ExecutorContext.column_map[item[0]]
                         col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("size") if data_buffer == string_buffer and col[EXECUTOR_COLUMNINFO] else None)
                         if datatransformer.is_int_type(col_type[0]):
                             if int_buffer:
@@ -817,6 +823,10 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
         
             with h5py.File(data_index_file,'r') as index_h5:
                 #filter the dataset
+                for ds in index_h5.values():
+                    dataset_size = ds.shape[0]
+                    break
+
                 if report_conditions:
                     #apply the conditions, try to share the np array among conditions to save memory
                     previous_item = None
@@ -825,50 +835,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         i += 1
                         itemid = report_condition_id(i)
                         #each condition is a tuple(column, operator, value), value is dependent on operator and column type
-                        col = column_map[cond[0]]
-    
-                        #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
-                        #map the value to internal value used by dataset if it is not mapped in the driver
-                        if cond[3]:
-                            #value is not mapped or partly mapped.
-                            if isinstance(cond[2],list):
-                                for i in cond[3]:
-                                    if col[EXECUTOR_TRANSFORMER]:
-                                        #need transformation
-                                        if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
-                                            #is enum type
-                                            cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-                                            if not cond[2]:
-                                                #searching value doesn't exist
-                                                cond[2][i] = None
-                                                break
-                                        else:
-                                            if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
-                                                cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
-                                            else:
-                                                cond[2][i] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2][i],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-                                if any(v is None for v in cond[2]):
-                                    #remove the None value from value list
-                                    cond[2] = [v for v in cond[2] if v is not None]
-                                if not cond[2]:
-                                    #searching value doesn't exist
-                                    cond_result = None
-                                    break
-                            else:
-                                if col[EXECUTOR_TRANSFORMER]:
-                                    #need transformation
-                                    if datatransformer.is_enum_func(col[EXECUTOR_TRANSFORMER]):
-                                        #is enum type
-                                        cond[2] = datatransformer.get_enum(cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
-                                        if not cond[2]:
-                                            #searching value doesn't exist
-                                            cond_result = None
-                                            break
-                                    else:
-                                        if col[EXECUTOR_COLUMNINFO] and col[EXECUTOR_COLUMNINFO].get("parameters"):
-                                            cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID],**col[EXECUTOR_COLUMNINFO]["parameters"])
-                                        else:
-                                            cond[2] = datatransformer.transform(col[EXECUTOR_TRANSFORMER],cond[2],databaseurl=databaseurl,columnid=col[EXECUTOR_COLUMNID])
+                        col = ExecutorContext.column_map[cond[0]]
     
                         if not previous_item or previous_item[0] != cond[0]:
                             #condition is applied on different column
@@ -947,11 +914,11 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             colname = item[0] if isinstance(item,(list,tuple)) else item
                             if colname == "*":
                                 continue
-                            col = column_map[colname]
+                            col = ExecutorContext.column_map[colname]
                             col_type = col[EXECUTOR_DTYPE]
                             buff = ExecutorContext.report_data_buffers.get(itemid)
                             if buff:
-                                if not buff[1]:
+                                if buff[1] is None:
                                     buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
                                 column_data = buff[1]
                             else:
@@ -1008,11 +975,11 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                 #new column should be loaded
                                 previous_item = item
                                 if item[0] != "*":
-                                    col = column_map[item[0]]
+                                    col = ExecutorContext.column_map[item[0]]
                                     col_type = col[EXECUTOR_DTYPE]
                                     buff = ExecutorContext.report_data_buffers.get(itemid)
                                     if buff:
-                                        if not buff[1]:
+                                        if buff[1] is None:
                                             buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
                                         column_data = buff[1]
                                     else:
@@ -1408,9 +1375,9 @@ def run():
         missing_files += [r[1] for r in result if r[2] == ExecutorContext.RESOURCE_NOT_FOUND]
         if missing_files:
             if report_status is None:
-                report_status = {"message":"The files({}) are missing".format(" , ".join(missing_files)})
+                report_status = {"message":"The files({}) are missing".format(" , ".join(missing_files))}
             else:
-                report_status["message"] = "The files({}) are missing".format(" , ".join(missing_files)
+                report_status["message"] = "The files({}) are missing".format(" , ".join(missing_files))
 
         no_data = False
         #sort the report_conditions
@@ -1772,7 +1739,6 @@ def run():
                 else:
                     #group_by is not enabled, all report data are statistical data
                     writer.writerows(resultset_iterator(report_result,original_resultset))
-                                ExecutorContex.data_buffers[cond_idUTOR_COLUMNINFO]
 
             report_status["status"] = "Succeed"
             report_status["report"] = report_file
