@@ -122,3 +122,4 @@ class FileLock(object):
     def __exit__(self,t,value,tb):
         self.release()
         self.previous_renew_time = None
+        return False if value else True

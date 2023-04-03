@@ -1,5 +1,6 @@
 import itertools
 import logging
+import atexit
 
 from .. import settings
 from .base import *
@@ -41,3 +42,4 @@ def is_group_func(f_name):
     return f_name in ["number2group","str2group"]
 
 
+atexit.register(clean)
