@@ -988,15 +988,34 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             col = ExecutorContext.column_map[colname]
                             col_type = col[EXECUTOR_DTYPE]
                             buff = ExecutorContext.report_data_buffers.get(itemid)
+                            read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
                             if buff:
                                 if buff[1] is None:
                                     buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                column_data = buff[1]
+                                    column_data = buff[1]
+                                elif buff[1].shape[0] < dataset_size:
+                                    buff[1].resize((dataset_size,))
+                                    column_data = buff[1]
+                                elif buff[1].shape[0] > dataset_size:
+                                    column_data = buff[1][:dataset_size]
+                                else:
+                                    column_data = buff[1]
                             else:
                                 column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
                                 ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                                 
-                            index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                            if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
+                                i = 0
+                                if datatransformer.is_string_type(col_type):
+                                    for x in index_h5[colname]:
+                                        column_data[i] = x.decode() 
+                                        i += 1
+                                else:
+                                    for x in index_h5[colname]:
+                                        column_data[i] = x
+                                        i += 1
+                            else:
+                                index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                             if filtered_rows == dataset_size:
                                 #all records are satisfied with the report condition
                                 df_datas[colname] = column_data
@@ -1049,14 +1068,33 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                     col = ExecutorContext.column_map[item[0]]
                                     col_type = col[EXECUTOR_DTYPE]
                                     buff = ExecutorContext.report_data_buffers.get(itemid)
+                                    read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
                                     if buff:
                                         if buff[1] is None:
                                             buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                        column_data = buff[1]
+                                            column_data = buff[1]
+                                        elif buff[1].shape[0] < dataset_size:
+                                            buff[1].resize((dataset_size,))
+                                            column_data = buff[1]
+                                        elif buff[1].shape[0] > dataset_size:
+                                            column_data = buff[1][:dataset_size]
+                                        else:
+                                            column_data = buff[1]
                                     else:
                                         column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
                                         ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                                 
+                                if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
+                                    i = 0
+                                    if datatransformer.is_string_type(col_type):
+                                        for x in index_h5[item[0]]:
+                                            column_data[i] = x.decode() 
+                                            i += 1
+                                    else:
+                                        for x in index_h5[item[0]]:
+                                            column_data[i] = x
+                                            i += 1
+                                else:
                                     index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
         
                             if item[0] == "*":
