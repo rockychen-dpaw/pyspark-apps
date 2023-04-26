@@ -313,6 +313,9 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
         else:
             city = internal["country"].capitalize()
             info = {"location":internal.get("location",[115.861,-31.92])}
+    except KeyError as ex:
+        city = "UNKNOWN"
+        info = {}
     except :
         raise Exception("Failed to get the city from GeoLite2-City.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
 
@@ -391,6 +394,8 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
     if result:
         try:
             country = (result.get("country") or result.get("registered_country") or result["continent"])["names"]["en"].capitalize().replace("'","\\\\'")
+        except KeyError as ex:
+            country = "UNKNOWN"
         except :
             raise Exception("Failed to get the country from GeoLite2-Country.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
     else:
