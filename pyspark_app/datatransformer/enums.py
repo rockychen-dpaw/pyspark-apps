@@ -299,19 +299,22 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
         _city_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-City.mmdb'))
 
     result = _city_reader.get(ip)
-    if result:
-        if "city" in result:
-            city = "{0} {1}".format((result.get("country") or result["registered_country"])["names"]["en"].capitalize(),result["city"]["names"]["en"].capitalize())
+    try:
+        if result:
+            if "city" in result:
+                city = "{0} {1}".format((result.get("country") or result.get("registered_country") or result["continent"])["names"]["en"].capitalize(),result["city"]["names"]["en"].capitalize())
+            else:
+                city = (result.get("country") or result.get("registered_country") or result["continent"])["names"]["en"].capitalize()
+    
+            info = {"location":[result["location"]["longitude"],result["location"]["latitude"]]}
+        elif "city" in internal:
+            city = "{0} {1}".format(internal["country"].capitalize(),internal["city"].capitalize())
+            info = {"location":internal.get("location",[115.861,-31.92])} 
         else:
-            city = (result.get("country") or result["registered_country"])["names"]["en"].capitalize()
-
-        info = {"location":[result["location"]["longitude"],result["location"]["latitude"]]}
-    elif "city" in internal:
-        city = "{0} {1}".format(internal["country"].capitalize(),internal["city"].capitalize())
-        info = {"location":internal.get("location",[115.861,-31.92])} 
-    else:
-        city = internal["country"].capitalize()
-        info = {"location":internal.get("location",[115.861,-31.92])}
+            city = internal["country"].capitalize()
+            info = {"location":internal.get("location",[115.861,-31.92])}
+    except :
+        raise Exception("Failed to get the city from GeoLite2-City.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
 
     key = city.replace("'","\\'")
 
@@ -386,7 +389,10 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
 
     result = _country_reader.get(ip)
     if result:
-        country = (result.get("country") or result["registered_country"])["names"]["en"].capitalize().replace("'","\\\\'")
+        try:
+            country = (result.get("country") or result.get("registered_country") or result["continent"])["names"]["en"].capitalize().replace("'","\\\\'")
+        except :
+            raise Exception("Failed to get the country from GeoLite2-Country.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
     else:
         country = internal.capitalize()
 

@@ -43,7 +43,7 @@ def get_harvester(datasetinfo):
     """
     Return a harvester which harvest the nginx access log from source repository.
     """
-    harvester_config = datasetinfo.get("harvester")
+    harvester_config = datasetinfo["download"].get("harvester")
     if not harvester_config:
         raise Exception("Nissing the configuration 'harvester'")
     harvester_config["name"]
@@ -165,6 +165,7 @@ class ExecutorContext(object):
 
     column_map = None
     report_data_buffers = None
+    cond_result = None
 
     @classmethod
     def can_share_context(cls,task_timestamp,reportid,executor_type,datasetid):
@@ -190,6 +191,7 @@ class ExecutorContext(object):
 
             cls.column_map = None
             cls.report_data_buffers = None
+            cls.cond_result = None
 
             return False
 
@@ -212,13 +214,11 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
 
             if not ExecutorContext.can_share_context(task_timestamp,reportid,ExecutorContext.DOWNLOAD,datasetid):
                 try:
-                    ExecutorContext.buffer_size = datasetinfo.get("indexbatchsize",10000)
+                    ExecutorContext.buffer_size = datasetinfo["download"].get("index_buffer",10000)
                 except:
                     ExecutorContext.buffer_size = 10000
 
                 cache_dir = datasetinfo.get("cache")
-                if not cache_dir:
-                    raise Exception("Nissing the configuration 'cache_dir'")
     
                 ExecutorContext.data_cache_dir = os.path.join(cache_dir,"data")
 
@@ -316,7 +316,7 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                 #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
                 before_get_lock = timezone.localtime()
                 try:
-                    with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),datasetinfo.get("download_lock_timeout",600) if datasetinfo else 600,timeout = lock_timeout) as lock:
+                    with FileLock(os.path.join(cache_folder,"{}.lock".format(data[1])),datasetinfo["download"].get("lock_timeout",600) if datasetinfo else 600,timeout = lock_timeout) as lock:
                         if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
                             #spend at least 1 second to get the lock, some other process worked on the same file too.
                             #regenerate the process_required_columns
@@ -398,7 +398,7 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                                 logwriter = csv.writer(data_f)
                                 if not ExecutorContext.databuff:
                                     try:
-                                        ExecutorContext.databuffer_size = datasetinfo.get("databatchsize",1000)
+                                        ExecutorContext.databuffer_size = datasetinfo["download"].get("download_buffer",1000)
                                     except:
                                         ExecutorContext.databuffer_size = 10000
                                     ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
@@ -595,7 +595,7 @@ def download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,d
                     logger.debug("The index file({1}) is downloading by other executor({0}).{2}".format(data_file,data_index_file,ex))
                     return [[*data,ExecutorContext.DOWNLOADING_BY_OTHERS]]
         except harvester.exceptions.ResourceNotFound as ex:
-            if datasetinfo and datasetinfo.get("ignore_missing_accesslogfile",False):
+            if datasetinfo and datasetinfo["download"].get("ignore_missing_accesslogfile",False):
                 return [[data[0],data[1],ExecutorContext.RESOURCE_NOT_FOUND]]
             else:
                 raise
@@ -826,6 +826,22 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
 
                 if report_conditions:
                     #apply the conditions, try to share the np array among conditions to save memory
+
+                    if ExecutorContext.cond_result is None:
+                        ExecutorContext.cond_result = np.empty((dataset_size,),dtype=bool)
+                        ExecutorContext.cond_result.fill(True)
+                        cond_result = ExecutorContext.cond_result
+                    elif ExecutorContext.cond_result.shape[0] < dataset_size:
+                        ExecutorContext.cond_result.resize((dataset_size,))
+                        ExecutorContext.cond_result.fill(True)
+                        cond_result = ExecutorContext.cond_result
+                    elif ExecutorContext.cond_result.shape[0] > dataset_size:
+                        ExecutorContext.cond_result.fill(True)
+                        cond_result = ExecutorContext.cond_result[:dataset_size]
+                    else:
+                        ExecutorContext.cond_result.fill(True)
+                        cond_result = ExecutorContext.cond_result
+
                     previous_item = None
                     i = -1
                     for cond in report_conditions:
@@ -833,23 +849,81 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         itemid = report_condition_id(i)
                         #each condition is a tuple(column, operator, value), value is dependent on operator and column type
                         col = ExecutorContext.column_map[cond[0]]
+                        buffer_size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
+                        if buffer_size > dataset_size:
+                            buffer_size = dataset_size
+                        #a config to control how to read the data from h5 file to memory
+                        read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
     
                         if not previous_item or previous_item[0] != cond[0]:
                             #condition is applied on different column
                             buff = ExecutorContext.report_data_buffers.get(itemid)
                             if buff:
-                                if not buff[1]:
-                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                column_data = buff[1]
+                                if buff[1] is None:
+                                    buff[1] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(*buff[0]))
+                                    column_data = buff[1]
+                                elif buff[1].shape[0] < buffer_size:
+                                    buff[1].resize((buffer_size,))
+                                    column_data = buff[1]
+                                elif buff[1].shape[0] > buffer_size:
+                                    column_data = buff[1][:buffer_size]
+                                else:
+                                    column_data = buff[1]
                             else:
-                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
+                                column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
                                 ExecutorContext.report_data_buffers[itemid] = [(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]),column_data]
-                            
-                            index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                        if cond_result is None:
-                            cond_result = operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
-                        else:
+
+                        if buffer_size == dataset_size:
+                            #buffer size is dataset's size
+                            if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
+                                i = 0
+                                if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                    for x in index_h5[col[EXECUTOR_COLUMNNAME]]:
+                                        column_data[i] = x.decode() 
+                                        i += 1
+                                else:
+                                    for x in index_h5[col[EXECUTOR_COLUMNNAME]]:
+                                        column_data[i] = x
+                                        i += 1
+                            else:
+                                index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                             cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
+                        else:
+                            #buffer size is smaller than dataset's size
+                            base_index = 0
+                            while base_index < dataset_size:
+                                if base_index + buffer_size <= dataset_size:
+                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
+                                        i = 0
+                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:base_index + buffer_size]:
+                                                column_data[i] = x.decode() 
+                                                i += 1
+                                        else:
+                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:base_index + buffer_size]:
+                                                column_data[i] = x
+                                                i += 1
+                                    else:
+                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[base_index:base_index + buffer_size],np.s_[0:buffer_size])
+                                    v_cond_result = cond_result[base_index:base_index + buffer_size]
+                                    v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
+                                else:
+                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
+                                        i = 0
+                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:dataset_size]:
+                                                column_data[i] = x.decode() 
+                                                i += 1
+                                        else:
+                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:dataset_size]:
+                                                column_data[i] = x
+                                                i += 1
+                                    else:
+                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[base_index:dataset_size],np.s_[0:dataset_size - base_index])
+                                    v_cond_result = cond_result[base_index:dataset_size]
+                                    v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data[0:dataset_size - base_index],cond[2])
+
+                                base_index += buffer_size
     
                         previous_item = cond
     
@@ -1316,7 +1390,26 @@ def run():
                 dataset = cursor.fetchone()
                 if dataset is None:
                     raise Exception("Dataset({}) doesn't exist.".format(datasetid))
-                dataset_name,dataset_info,dataset_refresh_requested = dataset
+                dataset_name,datasetinfo,dataset_refresh_requested = dataset
+                #validate the datasetinfo
+                if not datasetinfo or not datasetinfo.get("filepattern"):
+                    raise Exception("Missing the config item 'filepattern' in datasetinfo, which is used to construct the nginx access log file based on datetime")
+
+                if not datasetinfo.get("cache"):
+                    raise Exception("Nissing the config item 'cache' in datasetinfo")
+
+                if not datasetinfo.get("download") or not datasetinfo["download"].get("harvester"):
+                    raise Exception("Nissing the configuration 'download.harvester' in datasetinfo")
+    
+                concurrency = datasetinfo["download"].get("concurrency")
+                if concurrency and isinstance(concurrency,str) and concurrency.strip().startswith("lambda"):
+                     datasetinfo["download"]["concurrency"] = eval(datasetinfo["download"]["concurrency"])
+
+                datasetinfo["generate_report"] = datasetinfo.get("generate_report",{})
+                concurrency = datasetinfo["generate_report"].get("concurrency")
+                if concurrency and isinstance(concurrency,str) and concurrency.strip().startswith("lambda"):
+                     datasetinfo["generate_report"]["concurrency"] = eval(datasetinfo["generate_report"]["concurrency"])
+
 
                 cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
                 for row in cursor.fetchall():
@@ -1353,19 +1446,20 @@ def run():
         datasets = []
         dataset_time = report_start
         while dataset_time < report_end:
-            if not dataset_info.get("filepattern"):
-                raise Exception("Missing the config item 'filepattern' in datasetinfo, which is used to construct the nginx access log file based on datetime")
-            datasets.append((dataset_time.strftime("%Y%m%d%H"),dataset_time.strftime(dataset_info.get("filepattern"))))
+            datasets.append((dataset_time.strftime("%Y%m%d%H"),dataset_time.strftime(datasetinfo.get("filepattern"))))
             dataset_time += timedelta(hours=1)
 
         #download the file first,download files in one executor
         spark = get_spark_session()
-        download_tasks = dataset_info.get("download_concurrency",1) if dataset_info else 1
-        if len(datasets) < download_tasks:
-            download_tasks = len(datasets)
+        concurrency = datasetinfo["download"].get("concurrency",1) 
+        if callable(concurrency):
+            concurrency = concurrency(len(datasets))
 
-        rdd = spark.sparkContext.parallelize(datasets, download_tasks) 
-        rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,dataset_info,dataset_refresh_requested,1))
+        if len(datasets) < concurrency:
+            concurrency = len(datasets)
+
+        rdd = spark.sparkContext.parallelize(datasets, concurrency) 
+        rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_requested,1))
         result = rdd.collect()
         missing_files = [r[1] for r in result if r[2] == ExecutorContext.RESOURCE_NOT_FOUND]
         waiting_files = [(r[0],r[1]) for r in result if r[2] == ExecutorContext.DOWNLOADING_BY_OTHERS]
@@ -1377,7 +1471,7 @@ def run():
         #downloading the wating files in sync mode
         if waiting_files:
             rdd = spark.sparkContext.parallelize(waiting_files, 1) 
-            rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,dataset_info,dataset_refresh_requested))
+            rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_requested))
             result = rdd.collect()
 
             if missing_files:
@@ -1571,13 +1665,19 @@ def run():
                 #report sort by is useless
                 report_sort_by = None
 
-        rdd = spark.sparkContext.parallelize(datasets, len(datasets))
+        concurrency = datasetinfo["generate_report"].get("concurrency",1)
+        if callable(concurrency):
+            concurrency = concurrency(len(datasets))
+
+        if len(datasets) < concurrency:
+            concurrency = len(datasets)
+        rdd = spark.sparkContext.parallelize(datasets, concurrency)
         #perform the analysis per nginx access log file
         logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},resultset={4},report_type={5}".format(reportid,report_conditions,report_group_by,report_sort_by,resultset,report_type))
-        rdd = rdd.flatMap(analysis_factory(task_timestamp,reportid,databaseurl,datasetid,dataset_info,report_conditions,report_group_by,resultset,report_type))
+        rdd = rdd.flatMap(analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,report_conditions,report_group_by,resultset,report_type))
 
         #init the folder to place the report file
-        cache_dir = dataset_info.get("cache")
+        cache_dir = datasetinfo.get("cache")
         report_cache_dir = os.path.join(cache_dir,"report")
         report_file_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
         utils.mkdir(report_file_folder)
@@ -1585,13 +1685,13 @@ def run():
         if resultset == "__details__":
             result = rdd.collect()
             result.sort()
-            if dataset_info.get("data_header"):
+            if datasetinfo.get("data_header"):
                 report_header_file = os.path.join(report_cache_dir,"nginxaccesslog-report_header.csv")
                 if not os.path.exists(report_header_file):
                     #report_header_file does not exist, create it
                     with open(report_header_file,'w') as f:
                         writer = csv.writer(f)
-                        writer.writerow(dataset_info.get("data_header"))
+                        writer.writerow(datasetinfo.get("data_header"))
             else:
                 report_header_file = None
 
@@ -1789,10 +1889,9 @@ def run():
 
         if report_status and report_status["status"] == "Succeed":
             #clean the expired cache
-            cache_dir = dataset_info.get("cache") if dataset_info else None
+            cache_dir = datasetinfo.get("cache") if datasetinfo else None
             if cache_dir: 
-                cache_timeout = dataset_info.get("cache_timeout",28) #in days
-                logger.debug("cache timeout = {}".format(cache_timeout))
+                cache_timeout = datasetinfo["download"].get("cache_timeout",28) #in days
                 if cache_timeout > 0:
                     data_cache_dir = os.path.join(cache_dir,"data")
                     folders = [os.path.join(data_cache_dir,f) for f in os.listdir(data_cache_dir) if os.path.isdir(os.path.join(data_cache_dir,f))]
