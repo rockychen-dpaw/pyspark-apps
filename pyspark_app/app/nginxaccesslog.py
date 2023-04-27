@@ -1030,6 +1030,11 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             if end_index >= dataset_size:
                                 end_index = dataset_size
 
+                            result_size = (end_index - start_index) if filtered_rows == dataset_size else np.count_nonzero(cond_result[start_index:end_index])
+                            if result_size == 0:
+                                start_index += buffer_size
+                                continue
+
                             get_item_id = report_group_by_id
                             seq = -1
                             previous_item = None
@@ -1069,7 +1074,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                     else:
                                         column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
                                         ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
-                                        
+                             
                                     ds = index_h5[colname]
                                     if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
                                         logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file one by one.buffer={}".format(colname,buffer_size if buffer_size < dataset_size else 0))
@@ -1136,12 +1141,13 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                     #no 'group by', return the statistics data.
                     if filtered_rows == 0:
                         report_data = [0] * len(resultset)
-                        if report_type == HOURLY_REPORT:
-                            report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
 
                         if report_type == DAILY_REPORT:
                             #return a dict to perform the function 'reducebykey'
                             result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
+                        elif report_type == HOURLY_REPORT:
+                            #return a dict to perform the function 'reducebykey'
+                            result = [(dataset_time.strftime("%Y-%m-%d %H:00:00"),report_data)]
                         else:
                             result = [report_data]
 
@@ -1170,10 +1176,13 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             if end_index >= dataset_size:
                                 end_index = dataset_size
 
-                            if report_type == HOURLY_REPORT:
-                                report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
-                            else:
-                                report_data = []
+                            result_size = (end_index - start_index) if filtered_rows == dataset_size else np.count_nonzero(cond_result[start_index:end_index])
+                            if result_size == 0:
+                                start_index += buffer_size
+                                continue
+
+                            report_data = []
+
                             previous_item = None
                             seq = -1
                             read_direct = None
@@ -1243,10 +1252,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                             ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
                 
                                 if item[0] == "*":
-                                    if filtered_rows == dataset_size:
-                                        report_data.append(data_len)
-                                    else:
-                                        report_data.append(np.count_nonzero(cond_result[start_index:end_index]))
+                                    report_data.append(result_size)
                                 elif filtered_rows == dataset_size:
                                     report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
                                 elif read_direct:
@@ -1257,6 +1263,9 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                             if report_type == DAILY_REPORT:
                                 #return a dict to perform the function 'reducebykey'
                                 result.append((dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data))
+                            elif report_type == HOURLY_REPORT:
+                                #return a dict to perform the function 'reducebykey'
+                                result.append((dataset_time.strftime("%Y-%m-%d %H:00:00"),report_data))
                             else:
                                 result.append(report_data)
 
@@ -1922,9 +1931,9 @@ def run():
             report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}.csv".format(reportid))
             if report_group_by:
                 if report_type == HOURLY_REPORT:
-                    #hourly report, each access log is one hour data, no need to reduce
+                    #hourly report, each access log is one hour data, but buffer can split a log file into multiple seciton, reduce is required.
                     #a new column is added to the group_by
-                    report_result = rdd.collect()
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
                     report_group_by.insert(0,"__request_time__")
                     if report_sort_by:
                         report_sort_by.insert(0,["__request_time__",True])
@@ -1944,12 +1953,11 @@ def run():
                     report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
             else:
                 if report_type == HOURLY_REPORT:
-                    #hourly report, each access log is one hour data, no need to reduce
+                    #hourly report, each access log is one hour data, but buffer can split a log file into multiple seciton, reduce is required.
                     #a new column is added to resultset
-                    report_result = rdd.collect()
-                    resultset.insert(0,["__request_time__",None,"request_time"])
-                    original_resultset.insert(0,["__request_time__",None,"request_time"])
-                    #add a column 'request_time', adjust the value of count_column_index
+                    report_result = rdd.reduceByKey(merge_reportresult_factory(resultset)).collect()
+                    report_group_by = ["__request_time__"]
+                    report_sort_by = [["__request_time__",True]]
                 elif report_type == DAILY_REPORT:
                     #daily report, need to reduce the result
                     #the result is a map between day and value
