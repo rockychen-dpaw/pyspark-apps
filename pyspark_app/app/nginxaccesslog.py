@@ -686,15 +686,15 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         closest_float_column = [None,None,None]
                         closest_string_column = [None,None,None]
                         get_item_id = report_group_by_id
-                        i = -1
+                        seq = -1
                         for item in itertools.chain(report_group_by,["|"],resultset):
-                            i += 1
+                            seq += 1
                             if item == "|":
                                 #A separator between report group by and reset set
                                 get_item_id = resultset_id
-                                i = -1
+                                seq = -1
                                 continue
-                            itemid = get_item_id(i)
+                            itemid = get_item_id(seq)
                             colname = item[0] if isinstance(item,list) else item
                             if colname == "*":
                                 continue
@@ -843,89 +843,113 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         cond_result = ExecutorContext.cond_result
 
                     previous_item = None
-                    i = -1
-                    for cond in report_conditions:
-                        i += 1
-                        itemid = report_condition_id(i)
-                        #each condition is a tuple(column, operator, value), value is dependent on operator and column type
-                        col = ExecutorContext.column_map[cond[0]]
-                        buffer_size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
-                        if buffer_size > dataset_size:
-                            buffer_size = dataset_size
-                        #a config to control how to read the data from h5 file to memory
-                        read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
-    
-                        if not previous_item or previous_item[0] != cond[0]:
-                            #condition is applied on different column
-                            buff = ExecutorContext.report_data_buffers.get(itemid)
-                            if buff:
-                                if buff[1] is None:
-                                    buff[1] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                    column_data = buff[1]
-                                elif buff[1].shape[0] < buffer_size:
-                                    buff[1].resize((buffer_size,))
-                                    column_data = buff[1]
-                                elif buff[1].shape[0] > buffer_size:
-                                    column_data = buff[1][:buffer_size]
+                    seq = -1
+                    conds = []
+                    for cond in itertools.chain(report_conditions,[("$",)]):
+                        if previous_item and previous_item != cond[0] and conds:
+                            #process the conditions for the previous column
+                            itemid = conds[0][0]
+                            col = ExecutorContext.column_map[conds[0][1][0]]
+                            buffer_size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
+                            if buffer_size > dataset_size:
+                                buffer_size = dataset_size
+
+                            #a config to control how to read the data from h5 file to memory
+                            read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
+                            logger.debug("To check the report conditons, Load the data of the column({}) from h5 file one by one.buffer={}".format(cond[0],buffer_size if buffer_size < dataset_size else 0))
+
+                            #find the buffer to hold the data
+                            buffer = ExecutorContext.report_data_buffers.get(itemid)
+                            if buffer:
+                                if buffer[1] is None:
+                                    buffer[1] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(*buffer[0]))
+                                    column_data = buffer[1]
+                                elif buffer[1].shape[0] < buffer_size:
+                                    buffer[1].resize((buffer_size,))
+                                    column_data = buffer[1]
+                                elif buffer[1].shape[0] > buffer_size:
+                                    column_data = buffer[1][:buffer_size]
                                 else:
-                                    column_data = buff[1]
+                                    column_data = buffer[1]
                             else:
                                 column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
                                 ExecutorContext.report_data_buffers[itemid] = [(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]),column_data]
 
-                        if buffer_size == dataset_size:
-                            #buffer size is dataset's size
-                            if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
-                                i = 0
-                                if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                    for x in index_h5[col[EXECUTOR_COLUMNNAME]]:
-                                        column_data[i] = x.decode() 
-                                        i += 1
+                            ds = index_h5[col[EXECUTOR_COLUMNNAME]]
+                            #load the data from file to buffer and check the condition
+                            if buffer_size == dataset_size:
+                                #buffer size is dataset's size
+                                #load the data from file to buffer
+                                if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
+                                    i = 0
+                                    if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                        while i < dataset_size:
+                                            if cond_result[i]:
+                                                #only read the data which is selected by the previous conditons
+                                                column_data[i] = ds[i].decode() 
+                                            i += 1
+                                    else:
+                                        while i < dataset_size:
+                                            if cond_result[i]:
+                                                #only read the data which is selected by the previous conditons
+                                                column_data[i] = ds[i] 
+                                            i += 1
                                 else:
-                                    for x in index_h5[col[EXECUTOR_COLUMNNAME]]:
-                                        column_data[i] = x
-                                        i += 1
+                                    ds.read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                                #check the conditions
+                                for itemid,col_cond in conds:
+                                    cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
                             else:
-                                index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                            cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
-                        else:
-                            #buffer size is smaller than dataset's size
-                            base_index = 0
-                            while base_index < dataset_size:
-                                if base_index + buffer_size <= dataset_size:
-                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
-                                        i = 0
-                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:base_index + buffer_size]:
-                                                column_data[i] = x.decode() 
-                                                i += 1
-                                        else:
-                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:base_index + buffer_size]:
-                                                column_data[i] = x
-                                                i += 1
+                                #buffer size is smaller than dataset's size
+                                start_index = 0
+                                while start_index < dataset_size:
+                                    end_index = start_index + buffer_size
+                                    if end_index >= dataset_size:
+                                        end_index = dataset_size
+                                        data_len = end_index - start_index
                                     else:
-                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[base_index:base_index + buffer_size],np.s_[0:buffer_size])
-                                    v_cond_result = cond_result[base_index:base_index + buffer_size]
-                                    v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data,cond[2])
-                                else:
-                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
-                                        i = 0
-                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:dataset_size]:
-                                                column_data[i] = x.decode() 
-                                                i += 1
-                                        else:
-                                            for x in index_h5[col[EXECUTOR_COLUMNNAME]][base_index:dataset_size]:
-                                                column_data[i] = x
-                                                i += 1
-                                    else:
-                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[base_index:dataset_size],np.s_[0:dataset_size - base_index])
-                                    v_cond_result = cond_result[base_index:dataset_size]
-                                    v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],cond[1])(column_data[0:dataset_size - base_index],cond[2])
+                                        data_len = buffer_size
 
-                                base_index += buffer_size
-    
-                        previous_item = cond
+                                    #load the data from file to buffer
+                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col[EXECUTOR_DTYPE])):
+                                        i = start_index
+                                        j = 0
+                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                            while i < end_index:
+                                                if cond_result[i]:
+                                                    #only read the data which is selected by the previous conditons
+                                                    column_data[j] = ds[i].decode() 
+                                                i += 1
+                                                j += 1
+                                        else:
+                                            while i < end_index:
+                                                if cond_result[i]:
+                                                    #only read the data which is selected by the previous conditons
+                                                    column_data[j] = ds[i]
+                                                i += 1
+                                                j += 1
+                                    else:
+                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
+
+                                    #check the conditions
+                                    v_cond_result = cond_result[start_index:end_index]
+                                    for itemid,col_cond in conds:
+                                        if data_len < buffer_size:
+                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data[:data_len],col_cond[2])
+                                        else:
+                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
+
+                                    start_index += buffer_size
+
+                            conds.clear()
+
+                        if cond == "$":
+                            #finsihed
+                            continue
+                        seq += 1
+                        itemid = report_condition_id(seq)
+                        previous_item = cond[0]
+                        conds.append((itemid,cond))
     
                     column_data = None
     
@@ -966,70 +990,24 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                     if filtered_rows == 0:
                         result = []
                     else:
-                        df_datas = collections.OrderedDict()
-                        if report_type == HOURLY_REPORT:
-                            df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
-                        elif report_type == DAILY_REPORT:
-                            df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
-        
-                        get_item_id = report_group_by_id
-                        i = -1
-                        for item in itertools.chain(report_group_by,["|"],resultset):
-                            i += 1
-                            if item == "|":
-                                #A separator between report group by and reset set
-                                get_item_id = resultset_id
-                                i = -1
-                                continue
-                            itemid = get_item_id(i)
+                        buffer_size = None
+                        for item in itertools.chain(report_group_by,resultset):
                             colname = item[0] if isinstance(item,(list,tuple)) else item
                             if colname == "*":
                                 continue
                             col = ExecutorContext.column_map[colname]
-                            col_type = col[EXECUTOR_DTYPE]
-                            buff = ExecutorContext.report_data_buffers.get(itemid)
-                            read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
-                            if buff:
-                                if buff[1] is None:
-                                    buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                    column_data = buff[1]
-                                elif buff[1].shape[0] < dataset_size:
-                                    buff[1].resize((dataset_size,))
-                                    column_data = buff[1]
-                                elif buff[1].shape[0] > dataset_size:
-                                    column_data = buff[1][:dataset_size]
-                                else:
-                                    column_data = buff[1]
-                            else:
-                                column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
-                                ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
-                                
-                            if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
-                                i = 0
-                                if datatransformer.is_string_type(col_type):
-                                    for x in index_h5[colname]:
-                                        column_data[i] = x.decode() 
-                                        i += 1
-                                else:
-                                    for x in index_h5[colname]:
-                                        column_data[i] = x
-                                        i += 1
-                            else:
-                                index_h5[colname].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-                            if filtered_rows == dataset_size:
-                                #all records are satisfied with the report condition
-                                df_datas[colname] = column_data
-                            else:
-                                df_datas[colname] = column_data[cond_result]
+                            size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
+
+                            if size > dataset_size:
+                               size = dataset_size
+
+                            if buffer_size is None:
+                                buffer_size = size
+                            elif buffer_size > size:
+                                buffer_size = size
+
+                        df_datas = collections.OrderedDict()
         
-                        #create pandas dataframe
-                        df = pd.DataFrame(df_datas)
-                        #get the group object
-                        if report_type:
-                            df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
-                        else:
-                            df_group = df.groupby(report_group_by,group_keys=True)
-                        #perfrom the statistics on group
                         #populate the statistics map
                         statics_map = collections.OrderedDict()
                         for item in resultset:
@@ -1042,73 +1020,248 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                 statics_map[colname].append(operation.get_agg_func(item[1]))
                             else:
                                 statics_map[colname] = [operation.get_agg_func(item[1])]
-                        df_result = df_group.agg(statics_map)
+
+                        start_index = 0
+                        end_index = 0
+                        result = []
+                        #load the data from file to a configued buffer to prevent from out of memory
+                        while start_index < dataset_size:
+                            end_index = start_index + buffer_size
+                            if end_index >= dataset_size:
+                                end_index = dataset_size
+
+                            get_item_id = report_group_by_id
+                            seq = -1
+                            previous_item = None
+                            df_datas.clear()
+                            if report_type == HOURLY_REPORT:
+                                df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d %H:00:00")
+                            elif report_type == DAILY_REPORT:
+                                df_datas["__request_time__"] = dataset_time.strftime("%Y-%m-%d 00:00:00")
+                            for item in itertools.chain(report_group_by,["|"],resultset):
+                                seq += 1
+                                if item == "|":
+                                    #A separator between report group by and reset set
+                                    get_item_id = resultset_id
+                                    seq = -1
+                                    continue
+                                itemid = get_item_id(seq)
+                                colname = item[0] if isinstance(item,(list,tuple)) else item
+                                if colname == "*":
+                                    continue
+                                if not previous_item or previous_item != colname:
+                                    previous_item = colname
+                                    col = ExecutorContext.column_map[colname]
+                                    col_type = col[EXECUTOR_DTYPE]
+                                    buffer = ExecutorContext.report_data_buffers.get(itemid)
+                                    read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
+                                    if buffer:
+                                        if buffer[1] is None:
+                                            buffer[1] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(*buffer[0]))
+                                            column_data = buffer[1]
+                                        elif buffer[1].shape[0] < buffer_size:
+                                            buffer[1].resize((buffer_size,))
+                                            column_data = buffer[1]
+                                        elif buffer[1].shape[0] > buffer_size:
+                                            column_data = buffer[1][:buffer_size]
+                                        else:
+                                            column_data = buffer[1]
+                                    else:
+                                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                        ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
+                                        
+                                    ds = index_h5[colname]
+                                    if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
+                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file one by one.buffer={}".format(colname,buffer_size if buffer_size < dataset_size else 0))
+                                        if filtered_rows == dataset_size:
+                                            #all data are selected by the condition
+                                            i = 0
+                                            if datatransformer.is_string_type(col_type):
+                                                for x in ds[start_index:end_index]:
+                                                    column_data[i] = x.decode() 
+                                                    i += 1
+                                            else:
+                                                for x in ds[start_index:end_index]:
+                                                    column_data[i] = x
+                                                    i += 1
+                                            data_len = end_index - start_index
+                                        else:
+                                            #part of the data are selected by the condition,only read the selected data from file
+                                            data_len = 0
+                                            j = start_index
+                                            if datatransformer.is_string_type(col_type):
+                                                while j < end_index:
+                                                    if cond_result[j]:
+                                                        #selected by the condition
+                                                        column_data[data_len] = ds[j].decode()
+                                                        data_len += 1
+                                                    j += 1
+
+                                            else:
+                                                while j < end_index:
+                                                    if cond_result[j]:
+                                                        #selected by the condition
+                                                        column_data[data_len] = ds[j]
+                                                        data_len += 1
+                                                    j += 1
+                                    else:
+                                        #to reduce the file io, read all data into memory
+                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file with read_direct.buffer={}".format(colname,buffer_size if buffer_size < dataset_size else 0))
+                                        data_len = end_index - start_index
+                                        ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
     
-                        result =  [d for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns]))]
+                                if filtered_rows == dataset_size:
+                                    #all records are satisfied with the report condition
+                                    df_datas[colname] = column_data[:data_len]
+                                elif read_direct:
+                                    df_datas[colname] = column_data[:data_len][cond_result[start_index:end_index]]
+                                else:
+                                    df_datas[colname] = column_data[:data_len]
+            
+                            #create pandas dataframe
+                            df = pd.DataFrame(df_datas)
+                            #get the group object
+                            if report_type:
+                                df_group = df.groupby(["__request_time__",*report_group_by],group_keys=True)
+                            else:
+                                df_group = df.groupby(report_group_by,group_keys=True)
+                            #perfrom the statistics on group
+                            df_result = df_group.agg(statics_map)
+        
+                            for d in zip(df_result.index, zip(*[df_result[c] for c in df_result.columns])):
+                                result.append(d)
+
+                            start_index += buffer_size
                 else:
                     #no 'group by', return the statistics data.
                     if filtered_rows == 0:
                         report_data = [0] * len(resultset)
                         if report_type == HOURLY_REPORT:
                             report_data.insert(0,dataset_time.strftime("%Y-%m-%d %H:00:00"))
-                    else:
-                        if report_type == HOURLY_REPORT:
-                            report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
+
+                        if report_type == DAILY_REPORT:
+                            #return a dict to perform the function 'reducebykey'
+                            result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
                         else:
-                            report_data = []
-                        previous_item = None
-                        i = -1
-                        for item in resultset:
-                            i += 1
-                            itemid = resultset_id(i)
-                            if not previous_item or previous_item[0] != item[0]:
-                                #new column should be loaded
-                                previous_item = item
-                                if item[0] != "*":
-                                    col = ExecutorContext.column_map[item[0]]
-                                    col_type = col[EXECUTOR_DTYPE]
-                                    buff = ExecutorContext.report_data_buffers.get(itemid)
-                                    read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
-                                    if buff:
-                                        if buff[1] is None:
-                                            buff[1] = np.empty((dataset_size,),dtype=datatransformer.get_np_type(*buff[0]))
-                                            column_data = buff[1]
-                                        elif buff[1].shape[0] < dataset_size:
-                                            buff[1].resize((dataset_size,))
-                                            column_data = buff[1]
-                                        elif buff[1].shape[0] > dataset_size:
-                                            column_data = buff[1][:dataset_size]
-                                        else:
-                                            column_data = buff[1]
-                                    else:
-                                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
-                                        ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
-                                
-                                if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
-                                    i = 0
-                                    if datatransformer.is_string_type(col_type):
-                                        for x in index_h5[item[0]]:
-                                            column_data[i] = x.decode() 
-                                            i += 1
-                                    else:
-                                        for x in index_h5[item[0]]:
-                                            column_data[i] = x
-                                            i += 1
-                                else:
-                                    index_h5[item[0]].read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
-        
-                            if item[0] == "*":
-                                report_data.append(filtered_rows)
-                            elif filtered_rows == dataset_size:
-                                report_data.append(operation.get_func(col[2],item[1])(column_data))
-                            else:
-                                report_data.append(operation.get_func(col[2],item[1])(column_data[cond_result]))
-    
-                    if report_type == DAILY_REPORT:
-                        #return a dict to perform the function 'reducebykey'
-                        result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
+                            result = [report_data]
+
                     else:
-                        result = [report_data]
+                        buffer_size = None
+                        for item in resultset:
+                            if item[0] == '*':
+                                continue
+                            col = ExecutorContext.column_map[item[0]]
+                            size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
+
+                            if size > dataset_size:
+                               size = dataset_size
+
+                            if buffer_size is None:
+                                buffer_size = size
+                            elif buffer_size > size:
+                                buffer_size = size
+
+                        start_index = 0
+                        end_index = 0
+                        result = []
+                        #load the data from file to a configued buffer to prevent from out of memory
+                        while start_index < dataset_size:
+                            end_index = start_index + buffer_size
+                            if end_index >= dataset_size:
+                                end_index = dataset_size
+
+                            if report_type == HOURLY_REPORT:
+                                report_data = [dataset_time.strftime("%Y-%m-%d %H:00:00")]
+                            else:
+                                report_data = []
+                            previous_item = None
+                            seq = -1
+                            read_direct = None
+                            for item in resultset:
+                                seq += 1
+                                itemid = resultset_id(seq)
+                                if not previous_item or previous_item[0] != item[0]:
+                                    #new column should be loaded
+                                    previous_item = item
+                                    if item[0] != "*":
+                                        col = ExecutorContext.column_map[item[0]]
+                                        col_type = col[EXECUTOR_DTYPE]
+                                        buffer = ExecutorContext.report_data_buffers.get(itemid)
+                                        read_direct = col[EXECUTOR_COLUMNINFO]["read_direct"] if ("read_direct" in  col[EXECUTOR_COLUMNINFO]) else datasetinfo["generate_report"].get("read_direct")
+                                        if buffer:
+                                            if buffer[1] is None:
+                                                buffer[1] = np.empty((buffer_size,),dtype=datatransformer.get_np_type(*buffer[0]))
+                                                column_data = buffer[1]
+                                            elif buffer[1].shape[0] < buffer_size:
+                                                buffer[1].resize((buffer_size,))
+                                                column_data = buffer[1]
+                                            elif buffer[1].shape[0] > buffer_size:
+                                                column_data = buffer[1][:buffer_size]
+                                            else:
+                                                column_data = buffer[1]
+                                        else:
+                                            column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                            ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
+                                    
+                                        ds = index_h5[item[0]]
+                                        if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
+                                            logger.debug("To populate the result without group by, Load the data of the column({}) from h5 file one by one.buffer={}".format(item[0],buffer_size if buffer_size < dataset_size else 0))
+                                            if filtered_rows == dataset_size:
+                                                #all data are selected by the condition
+                                                i = 0
+                                                if datatransformer.is_string_type(col_type):
+                                                    for x in ds[start_index:end_index]:
+                                                        column_data[i] = x.decode() 
+                                                        i += 1
+                                                else:
+                                                    for x in ds[start_index:end_index]:
+                                                        column_data[i] = x
+                                                        i += 1
+                                                data_len = end_index - start_index
+                                            else:
+                                                #part of the data are selected by the condition,only read the selected data from file
+                                                data_len = 0
+                                                j = start_index
+                                                if datatransformer.is_string_type(col_type):
+                                                    while j < end_index:
+                                                        if cond_result[j]:
+                                                            #selected by the condition
+                                                            column_data[data_len] = ds[j].decode()
+                                                            data_len += 1
+                                                        j += 1
+
+                                                else:
+                                                    while j < end_index:
+                                                        if cond_result[j]:
+                                                            #selected by the condition
+                                                            column_data[data_len] = ds[j]
+                                                            data_len += 1
+                                                        j += 1
+                                        else:
+                                            #to reduce the file io, read all data into memory
+                                            logger.debug("To populate the result without group by, Load the data of the column({}) from h5 file with read_direct.buffer={}".format(item[0],buffer_size if buffer_size < dataset_size else 0))
+                                            data_len = end_index - start_index
+                                            ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
+                
+                                if item[0] == "*":
+                                    if filtered_rows == dataset_size:
+                                        report_data.append(data_len)
+                                    else:
+                                        report_data.append(np.count_nonzero(cond_result[start_index:end_index]))
+                                elif filtered_rows == dataset_size:
+                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+                                elif read_direct:
+                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
+                                else:
+                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+
+                            if report_type == DAILY_REPORT:
+                                #return a dict to perform the function 'reducebykey'
+                                result.append((dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data))
+                            else:
+                                result.append(report_data)
+
+                            start_index += buffer_size
                         
                 logger.debug("{} : Return the result from executor.reportid={}, access log file={}".format(utils.get_processid(),reportid,data[1]))
                 return result
@@ -1910,6 +2063,8 @@ def run():
             report_status["raw_report"] = report_raw_file
             report_status["report_header"] = True
             report_status["records"] = utils.get_line_counter(report_file) - 1
+            if "message" in report_status:
+                del report_status["message"]
     except Exception as ex:
         msg = "Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc())
         logger.error(msg)

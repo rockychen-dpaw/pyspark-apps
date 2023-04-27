@@ -78,7 +78,6 @@ def _merge_avg(d1,d2):
         return [d1[0] + d2[0],d1[1] + d2[1]]
 
 def _merge_count(d1,d2):
-    logger.debug("{} + {} = {}".format(d1,d2,(d1+d2)))
     return d1 + d2
 
 merge_operator_map = {
