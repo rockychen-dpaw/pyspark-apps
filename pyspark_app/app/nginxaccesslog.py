@@ -1183,6 +1183,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                 if not previous_item or previous_item[0] != item[0]:
                                     #new column should be loaded
                                     previous_item = item
+                                    data_len = end_index - start_index
                                     if item[0] != "*":
                                         col = ExecutorContext.column_map[item[0]]
                                         col_type = col[EXECUTOR_DTYPE]
@@ -1217,7 +1218,6 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                                     for x in ds[start_index:end_index]:
                                                         column_data[i] = x
                                                         i += 1
-                                                data_len = end_index - start_index
                                             else:
                                                 #part of the data are selected by the condition,only read the selected data from file
                                                 data_len = 0
@@ -1240,7 +1240,6 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                         else:
                                             #to reduce the file io, read all data into memory
                                             logger.debug("To populate the result without group by, Load the data of the column({}) from h5 file with read_direct.buffer={}".format(item[0],buffer_size if buffer_size < dataset_size else 0))
-                                            data_len = end_index - start_index
                                             ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
                 
                                 if item[0] == "*":
