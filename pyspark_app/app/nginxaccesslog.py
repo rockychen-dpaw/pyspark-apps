@@ -961,6 +961,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                     filtered_rows = dataset_size
     
     
+                logger.debug("{}: {} records are selected by the report condition ({})".format(utils.get_processid(),filtered_rows,report_conditions))
                 if resultset == "__details__":
                     #return the detail logs
                     if filtered_rows == 0:
@@ -1031,6 +1032,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                 end_index = dataset_size
 
                             result_size = (end_index - start_index) if filtered_rows == dataset_size else np.count_nonzero(cond_result[start_index:end_index])
+                            logger.debug("{}: {} records are selected by the report condition ({}),access log file={}, start_index={}, end_index={} ".format(utils.get_processid(),result_size,report_conditions,data[1],start_index,end_index))
                             if result_size == 0:
                                 start_index += buffer_size
                                 continue
@@ -1077,7 +1079,8 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                              
                                     ds = index_h5[colname]
                                     if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
-                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file one by one.buffer={}".format(colname,buffer_size if buffer_size < dataset_size else 0))
+                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file one by one.buffer={},start_index={}, end_index={}".format(colname,buffer_size if buffer_size < dataset_size else 0,start_index,end_index))
+                                        read_direct = False
                                         if filtered_rows == dataset_size:
                                             #all data are selected by the condition
                                             i = 0
@@ -1111,7 +1114,8 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                                     j += 1
                                     else:
                                         #to reduce the file io, read all data into memory
-                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file with read_direct.buffer={}".format(colname,buffer_size if buffer_size < dataset_size else 0))
+                                        logger.debug("To populate the result with group by, Load the data of the column({}) from h5 file with read_direct.buffer={},start_index={}, end_index={} ".format(colname,buffer_size if buffer_size < dataset_size else 0,start_index,end_index))
+                                        read_direct = True
                                         data_len = end_index - start_index
                                         ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
     
@@ -1216,6 +1220,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                         ds = index_h5[item[0]]
                                         if read_direct == False or (read_direct is None and datatransformer.is_string_type(col_type)):
                                             logger.debug("To populate the result without group by, Load the data of the column({}) from h5 file one by one.buffer={}".format(item[0],buffer_size if buffer_size < dataset_size else 0))
+                                            read_direct = False
                                             if filtered_rows == dataset_size:
                                                 #all data are selected by the condition
                                                 i = 0
@@ -1249,6 +1254,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                         else:
                                             #to reduce the file io, read all data into memory
                                             logger.debug("To populate the result without group by, Load the data of the column({}) from h5 file with read_direct.buffer={}".format(item[0],buffer_size if buffer_size < dataset_size else 0))
+                                            read_direct = True
                                             ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
                 
                                 if item[0] == "*":
@@ -1696,7 +1702,7 @@ def run():
 
         #sort the report_conditions
         if report_conditions:
-            report_conditions.sort()
+            report_conditions.sort(key=lambda cond:(0 if column_map[cond[0]][DRIVER_COLUMNINFO].get("read_direct",False if datatransformer.is_string_type(column_map[cond[0]][DRIVER_DTYPE]) else True) else 1,cond))
             #try to map the value to internal value used by dataset
             #Append a member to each cond to indicate the mapping status: if the member is False, value is mapped or no need to map; value is True or the indexes of the data which need to be mapped.
             for cond in report_conditions:
