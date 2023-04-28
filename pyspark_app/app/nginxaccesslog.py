@@ -1585,6 +1585,9 @@ def run():
                     return
                 elif report_status is None:
                     report_status = {}
+                else:
+                    if "message" in report_status:
+                        del report_status["message"]
 
                 if report_sort_by:
                     #convert the sort type from string to bool
@@ -2076,8 +2079,6 @@ def run():
             report_status["raw_report"] = report_raw_file
             report_status["report_header"] = True
             report_status["records"] = utils.get_line_counter(report_file) - 1
-            if "message" in report_status:
-                del report_status["message"]
     except Exception as ex:
         msg = "Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc())
         logger.error(msg)
