@@ -1553,9 +1553,143 @@ def get_group_key_data_4_sortby_factory(databaseurl,report_group_by,pos,columnid
 
     return _func1 if len(report_group_by) == 1 else _func2
 
-def run():
+def download_logfiles():
+    try:
+        datasetid = os.environ.get("DATASET")
+        if not datasetid:
+            raise Exception("Missing env variable 'DATASET'")
+        datasetid = int(datasetid)
+
+        #get environment variable passed by report 
+        databaseurl = os.environ.get("DATABASEURL")
+        if not databaseurl:
+            raise Exception("Missing env variable 'DATABASEURL'")
+        try:
+            start_time = os.environ.get("START_TIME")
+            if not start_time:
+                raise Exception("Please configure env variable 'START_TIME' to download access log files")
+            start_time = timezone.parse(start_time,"%Y-%m-%dT%H:%M:%S")
+            if start_time.minute or start_time.second or start_time.microsecond:
+                start_time = start_time.replace(minute=0,second=0,microsecond=0)
+        except Exception as ex:
+            raise Exception("Failed to parse env variable 'START_TIME'({}).{}".format(start_time,str(ex)))
+
+        try:
+            end_time = os.environ.get("END_TIME")
+            if not end_time:
+                raise Exception("Please configure env variable 'END_TIME' to download access log files")
+            end_time = timezone.parse(end_time,"%Y-%m-%dT%H:%M:%S")
+            if end_time.minute or end_time.second or end_time.microsecond:
+                end_time = end_time.replace(minute=0,second=0,microsecond=0)
+            end_time  += timedelta(hours=1)
+        except Exception as ex:
+            raise Exception("Failed to parse env variable 'END_TIME'({}).{}".format(end_time,str(ex)))
+
+        logger.debug("Begin to generate the report({})".format(reportid))
+        task_timestamp = timezone.timestamp()
+    
+        column_map = {} #map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
+        with database.Database(databaseurl).get_conn(True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("select name,datasetinfo,refresh_requested from datascience_dataset where id = {}".format(datasetid))
+                dataset = cursor.fetchone()
+                if dataset is None:
+                    raise Exception("Dataset({}) doesn't exist.".format(datasetid))
+                dataset_name,datasetinfo,dataset_refresh_requested = dataset
+                #validate the datasetinfo
+                if not datasetinfo or not datasetinfo.get("filepattern"):
+                    raise Exception("Missing the config item 'filepattern' in datasetinfo, which is used to construct the nginx access log file based on datetime")
+
+                if not datasetinfo.get("cache"):
+                    raise Exception("Nissing the config item 'cache' in datasetinfo")
+
+                if not datasetinfo.get("download") or not datasetinfo["download"].get("harvester"):
+                    raise Exception("Nissing the configuration 'download.harvester' in datasetinfo")
+    
+                concurrency = datasetinfo["download"].get("concurrency")
+                if concurrency and isinstance(concurrency,str) and concurrency.strip().startswith("lambda"):
+                     datasetinfo["download"]["concurrency"] = eval(datasetinfo["download"]["concurrency"])
+
+                #ignore if resource file is not found
+                datasetinfo["download"]["ignore_missing_accesslogfile"] = True
+
+
+                cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(datasetid))
+                for row in cursor.fetchall():
+                    column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
+
+        #populate the list of nginx access log file
+        datasets = []
+        dataset_time = start_time
+        while dataset_time < end_time:
+            datasets.append((dataset_time.strftime("%Y%m%d%H"),dataset_time.strftime(datasetinfo.get("filepattern"))))
+            dataset_time += timedelta(hours=1)
+
+        #download the file first,download files in one executor
+        spark = get_spark_session()
+        concurrency = datasetinfo["download"].get("concurrency",1) 
+        if callable(concurrency):
+            concurrency = concurrency(len(datasets))
+
+        if len(datasets) < concurrency:
+            concurrency = len(datasets)
+
+        rdd = spark.sparkContext.parallelize(datasets, concurrency) 
+        rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_requested,1))
+        result = rdd.collect()
+        missing_files = [r[1] for r in result if r[2] == ExecutorContext.RESOURCE_NOT_FOUND]
+        waiting_files = [(r[0],r[1]) for r in result if r[2] == ExecutorContext.DOWNLOADING_BY_OTHERS]
+        datasets = [(r[0],r[1]) for r in result if r[2] in (ExecutorContext.DOWNLOADED,ExecutorContext.ALREADY_DOWNLOADED)]
+
+        if waiting_files:
+            logger.debug("The files({}) are downloading by other report".format(waiting_files))
+
+        #downloading the wating files in sync mode
+        if waiting_files:
+            rdd = spark.sparkContext.parallelize(waiting_files, 1) 
+            rdd = rdd.flatMap(download_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,dataset_refresh_requested))
+            result = rdd.collect()
+
+            if missing_files:
+                missing_files += [r[1] for r in result if r[2] == ExecutorContext.RESOURCE_NOT_FOUND]
+            else:
+                missing_files = [r[1] for r in result if r[2] == ExecutorContext.RESOURCE_NOT_FOUND]
+
+            if datasets:   
+                datasets += [(r[0],r[1]) for r in result if r[2] in (ExecutorContext.DOWNLOADED,ExecutorContext.ALREADY_DOWNLOADED)]
+            else:
+                datasets = [(r[0],r[1]) for r in result if r[2] in (ExecutorContext.DOWNLOADED,ExecutorContext.ALREADY_DOWNLOADED)]
+
+        if missing_files:
+            logger.warning("The files({}) are missing".format(" , ".join(missing_files)))
+
+        if datasets:
+            logger.info("The nginx acces log files({}) are downloaded or already downloaded before".format(datasets))
+        else:
+            logger.info("No nginx access log files are downloaded ")
+
+        cache_dir = datasetinfo.get("cache") if datasetinfo else None
+        if cache_dir: 
+            cache_timeout = datasetinfo["download"].get("cache_timeout",28) #in days
+            if cache_timeout > 0:
+                data_cache_dir = os.path.join(cache_dir,"data")
+                folders = [os.path.join(data_cache_dir,f) for f in os.listdir(data_cache_dir) if os.path.isdir(os.path.join(data_cache_dir,f))]
+                logger.debug("Found {} cache folders".format(len(folders)))
+                if len(folders) > cache_timeout:
+                    #some cached data files are expired
+                    folders.sort()
+                    for i in range(len(folders) - cache_timeout):
+                        logger.debug("Remove the expired cached data file folder({})".format(folders[i]))
+                        utils.remove_dir(folders[i])
+
+
+    except Exception as ex:
+        logger.error("Failed to download the access log files.{}".format(traceback.format_exc()))
+        raise 
+
+def generate_report(reportid):
     """
-    The entry point of pyspark application
+    generate report
     """
     try:
         report_status = None
@@ -1564,10 +1698,6 @@ def run():
         if not databaseurl:
             raise Exception("Missing env variable 'DATABASEURL'")
     
-        reportid = os.environ.get("REPORTID")
-        if reportid is None:
-            raise Exception("Missing env variable 'REPORTID'")
-
         logger.debug("Begin to generate the report({})".format(reportid))
         task_timestamp = timezone.timestamp()
     
@@ -2111,5 +2241,9 @@ def run():
                             utils.remove_dir(folders[i])
 
 if __name__ == "__main__":
-    run()
-        
+    reportid =  os.environ.get("REPORTID")
+    if reportid:
+        generate_report(reportid)
+    else:
+        download_logfiles()
+
