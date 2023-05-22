@@ -968,22 +968,22 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_processid(),data[1],report_conditions))
                         return [(data[0],data[1],0,None)]
                     else:
-                        report_file_folder = os.path.join(ExecutorContext.report_cache_dir,"tmp")
-                        utils.mkdir(report_file_folder)
-                        report_file = os.path.join(report_file_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
+                        reportfile_folder = os.path.join(ExecutorContext.report_cache_dir,"tmp")
+                        utils.mkdir(reportfile_folder)
+                        reportfile = os.path.join(reportfile_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[1]),reportid,data[0]))
                         logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_processid(),data[1],report_conditions))
                         if filtered_rows == dataset_size:
                             #all logs are returned
                             #unlikely to happen.
-                            shutil.copyfile(data_file,report_file)
-                            return [(data[0],data[1],dataset_size,report_file)]
+                            shutil.copyfile(data_file,reportfile)
+                            return [(data[0],data[1],dataset_size,reportfile)]
                         else:
                             report_size = np.count_nonzero(cond_result)
                             indexes = np.flatnonzero(cond_result)
-                            with open(report_file,'w') as report_f:
+                            with open(reportfile,'w') as report_f:
                                 reportwriter = csv.writer(report_f)
                                 reportwriter.writerows(report_details(data_file,indexes))
-                            return [(data[0],data[1],report_size,report_file)]
+                            return [(data[0],data[1],report_size,reportfile)]
     
                 if report_group_by :
                     #'group by' enabled
@@ -1687,12 +1687,17 @@ def download_logfiles():
         logger.error("Failed to download the access log files.{}".format(traceback.format_exc()))
         raise 
 
+ADHOC_REPORT_SQL = "select name,dataset_id,\"start\",\"end\",rtype,conditions,\"group_by\",\"sort_by\",resultset,status from datascience_report where id = {}"
+PERIODIC_REPORT_SQL = "select b.name,b.dataset_id,a.interval_start as start,a.interval_end as end,b.rtype,b.conditions,b.\"group_by\" as \"group_by\",b.\"sort_by\" as \"sort_by\",b.resultset,a.status from datascience_periodicreportinstance a join datascience_periodicreport b on a.report_id = b.id where a.id = {}"
 def generate_report(reportid):
     """
     generate report
     """
     try:
+        reportfile = None
+        reportsize = None
         report_status = None
+        periodic_report = os.environ.get("PERIODIC_REPORT","false") == "true"
         #get environment variable passed by report 
         databaseurl = os.environ.get("DATABASEURL")
         if not databaseurl:
@@ -1704,20 +1709,30 @@ def generate_report(reportid):
         column_map = {} #map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
         with database.Database(databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("select name,dataset_id,\"start\",\"end\",rtype,conditions,\"group_by\",\"sort_by\",resultset,status from datascience_report where id = {}".format(reportid))
+                cursor.execute((PERIODIC_REPORT_SQL if periodic_report else ADHOC_REPORT_SQL).format(reportid))
                 report = cursor.fetchone()
                 if report is None:
                     raise Exception("Report({}) doesn't exist.".format(reportid))
                 report_name,datasetid,report_start,report_end,report_type,report_conditions,report_group_by,report_sort_by,resultset,report_status = report
-                if report_status and report_status.get("status") == "Succeed":
+                if periodic_report:
+                    if report_status is None:
+                        report_status  = {"report":{}}
+                    elif "report" not in report_status:
+                        report_status["report"]  = {}
+
+                    report_populate_status = report_status["report"]
+                else:
+                    if report_status is None:
+                        report_status = {}
+                    report_populate_status = report_status
+
+                if report_populate_status and report_populate_status.get("status") == "Succeed":
                     #already succeed
                     report_status = None
                     return
-                elif report_status is None:
-                    report_status = {}
                 else:
-                    if "message" in report_status:
-                        del report_status["message"]
+                    if "message" in report_populate_status:
+                        del report_populate_status["message"]
 
                 if report_sort_by:
                     #convert the sort type from string to bool
@@ -1753,8 +1768,12 @@ def generate_report(reportid):
                 for row in cursor.fetchall():
                     column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
 
-                report_status["status"] = "Running"
-                cursor.execute("update datascience_report set status='{1}',exec_start='{2}',exec_end=null where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
+                report_populate_status["status"] = "Running"
+                if periodic_report:
+                    report_populate_status["exec_start"] = timezone.format()
+                    cursor.execute("update datascience_periodicreportinstance set status='{1}' where id = {0}".format(reportid,json.dumps(report_status)))
+                else:
+                    cursor.execute("update datascience_report set status='{1}',exec_start='{2}',exec_end=null where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
                 conn.commit()
 
         if report_type == DAILY_REPORT:
@@ -1767,7 +1786,8 @@ def generate_report(reportid):
             if report_end.hour or report_end.minute or report_end.second or report_end.microsecond:
                 report_end = report_end.replace(hour=0,minute=0,second=0,microsecond=0)
             #because report_end is included, so set report_end to next day
-            report_end  += timedelta(days=1)
+            if not periodic_report:
+                report_end  += timedelta(days=1)
         else:
             #the minimum time unit of report_start and report_end(included) is hour; if it is not, set minute,second and microsecond to 0
             report_start = timezone.localtime(report_start)
@@ -1778,7 +1798,8 @@ def generate_report(reportid):
             if report_end.minute or report_end.second or report_end.microsecond:
                 report_end = report_end.replace(minute=0,second=0,microsecond=0)
             #because report_end is included, so set report_end to next hour
-            report_end  += timedelta(hours=1)
+            if not periodic_report:
+                report_end  += timedelta(hours=1)
     
         #populate the list of nginx access log file
         datasets = []
@@ -1823,14 +1844,15 @@ def generate_report(reportid):
                 datasets = [(r[0],r[1]) for r in result if r[2] in (ExecutorContext.DOWNLOADED,ExecutorContext.ALREADY_DOWNLOADED)]
 
         if missing_files:
-            if report_status is None:
-                report_status = {"message":"The files({}) are missing".format(" , ".join(missing_files))}
+            if report_populate_status is None:
+                report_populate_status = {"message":"The files({}) are missing".format(" , ".join(missing_files))}
             else:
-                report_status["message"] = "The files({}) are missing".format(" , ".join(missing_files))
+                report_populate_status["message"] = "The files({}) are missing".format(" , ".join(missing_files))
 
         if not datasets:
-            report_status["status"] = "Succeed"
-            report_status["has_data"] = False
+            report_populate_status["status"] = "Succeed"
+            reportfile = None
+            reportsize = None
             return 
 
         #sort the report_conditions
@@ -1871,8 +1893,9 @@ def generate_report(reportid):
                     cond[2] = [v for v in cond[2] if v is not None]
                     if not cond[2]:
                         #no data
-                        report_status["status"] = "Succeed"
-                        report_status["has_data"] = False
+                        report_populate_status["status"] = "Succeed"
+                        reportfile = None
+                        reportsize = None
                         return 
                 else:
                     if col[DRIVER_TRANSFORMER]:
@@ -1896,8 +1919,9 @@ def generate_report(reportid):
                         raise Exception("Type({}) Not Supported".format(col[DRIVER_DTYPE]))
                     if cond[2] is None:
                         #no data
-                        report_status["status"] = "Succeed"
-                        report_status["has_data"] = False
+                        report_populate_status["status"] = "Succeed"
+                        reportfile = None
+                        reportsize = None
                         return 
 
         #if resultset contains a column '__all__', means this report will return acess log details, ignore other resultset columns
@@ -2017,8 +2041,8 @@ def generate_report(reportid):
         #init the folder to place the report file
         cache_dir = datasetinfo.get("cache")
         report_cache_dir = os.path.join(cache_dir,"report")
-        report_file_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
-        utils.mkdir(report_file_folder)
+        reportfile_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
+        utils.mkdir(reportfile_folder)
 
         if resultset == "__details__":
             result = rdd.collect()
@@ -2036,38 +2060,39 @@ def generate_report(reportid):
             result = [r for r in result if r[3]]
             if len(result) == 0:
                 logger.debug("No data found")
-                report_status["status"] = "Succeed"
-                report_status["has_data"] = False
+                report_populate_status["status"] = "Succeed"
+                reportfile = None
+                reportsize = None
                 return 
 
-            report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}{}".format(reportid,os.path.splitext(result[0][3])[1]))
+            reportfile = os.path.join(reportfile_folder,"nginxaccesslog-report-{}{}".format(reportid,os.path.splitext(result[0][3])[1]))
             if report_header_file:
                 #write the data header as report header
                 files = [r[3] for r in result]
                 files.insert(0,report_header_file)
-                utils.concat_files(files,report_file)
+                utils.concat_files(files,reportfile)
                 for r in result:
                     utils.remove_file(r[3])
             else:
                 if len(result) == -1:
-                    os.rename(result[0][3],report_file)
+                    os.rename(result[0][3],reportfile)
                 else:
-                    utils.concat_files([r[3] for r in result],report_file)
+                    utils.concat_files([r[3] for r in result],reportfile)
                     for r in result:
                         utils.remove_file(r[3])
-            logger.debug("report file = {}".format(report_file))
-            report_status["status"] = "Succeed"
-            report_status["report"] = report_file
+            logger.debug("report file = {}".format(reportfile))
+            report_populate_status["status"] = "Succeed"
             if report_header_file:
-                report_status["report_header"] = True
-                report_status["records"] = utils.get_line_counter(report_file) - 1
+                report_populate_status["report_header"] = True
+                reportsize = utils.get_line_counter(reportfile) - 1
+
             else:
-                report_status["report_header"] = False
-                report_status["records"] = utils.get_line_counter(report_file)
+                report_populate_status["report_header"] = False
+                reportsize = utils.get_line_counter(reportfile)
             return 
         else:
-            report_raw_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}-raw.csv".format(reportid))
-            report_file = os.path.join(report_file_folder,"nginxaccesslog-report-{}.csv".format(reportid))
+            reportfile_raw = os.path.join(reportfile_folder,"nginxaccesslog-report-{}-raw.csv".format(reportid))
+            reportfile = os.path.join(reportfile_folder,"nginxaccesslog-report-{}.csv".format(reportid))
             if report_group_by:
                 if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, but buffer can split a log file into multiple seciton, reduce is required.
@@ -2108,8 +2133,9 @@ def generate_report(reportid):
                     report_result = [rdd.reduce(merge_reportresult_factory(resultset))]
 
             if not report_result:
-                report_status["status"] = "Succeed"
-                report_status["has_data"] = False
+                report_populate_status["status"] = "Succeed"
+                reportfile = None
+                reportsize = None
                 return 
 
 
@@ -2173,7 +2199,7 @@ def generate_report(reportid):
 
 
             #save the report raw data to file and also convert the enumeration data back to string
-            with open(report_raw_file, 'w', newline='') as f:
+            with open(reportfile_raw, 'w', newline='') as f:
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
@@ -2189,7 +2215,7 @@ def generate_report(reportid):
                     writer.writerows(report_result)
  
             #save the report to file and also convert the enumeration data back to string
-            with open(report_file, 'w', newline='') as f:
+            with open(reportfile, 'w', newline='') as f:
                 writer = csv.writer(f)
                 #writer header
                 if report_group_by:
@@ -2204,27 +2230,49 @@ def generate_report(reportid):
                     #group_by is not enabled, all report data are statistical data
                     writer.writerows(resultset_iterator(report_result,original_resultset))
 
-            report_status["status"] = "Succeed"
-            report_status["report"] = report_file
-            report_status["raw_report"] = report_raw_file
-            report_status["report_header"] = True
-            report_status["records"] = utils.get_line_counter(report_file) - 1
+            report_populate_status["status"] = "Succeed"
+            report_populate_status["raw_report"] = reportfile_raw
+            report_populate_status["report_header"] = True
+            reportsize = utils.get_line_counter(reportfile) - 1
     except Exception as ex:
         msg = "Failed to generate the report.report={}.{}".format(reportid,traceback.format_exc())
         logger.error(msg)
-        if not report_status:
-            report_status = {}
-        report_status["status"] = "Failed"
-        report_status["message"] = base64.b64encode(msg.encode()).decode()
+        if report_status is None:
+            if periodic_report:
+                if report_status is None:
+                    report_status  = {"report":{}}
+
+                report_populate_status = report_status["report"]
+            else:
+                report_status = {}
+                report_populate_status = report_status
+        report_populate_status["status"] = "Failed"
+        report_populate_status["message"] = base64.b64encode(msg.encode()).decode()
         raise 
     finally:
         if report_status:
             with database.Database(databaseurl).get_conn(True) as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("update datascience_report set status='{1}',exec_end='{2}' where id = {0}".format(reportid,json.dumps(report_status),timezone.dbtime()))
+                    if periodic_report:
+                        report_populate_status["exec_end"] = timezone.format()
+
+                        cursor.execute("update datascience_periodicreportinstance set rawfile='{1}',reportsize={2}, status='{3}' where id = {0}".format(
+                            reportid,
+                            reportfile if reportfile else 'null',
+                            reportsize if reportsize is None else 'null',
+                            json.dumps(report_status)
+                        ))
+                    else:
+                        cursor.execute("update datascience_report set reportfile='{1}',reportsize={2}, status='{3}', exec_end='{4}' where id = {0}".format(
+                            reportid,
+                            reportfile if reportfile else 'null',
+                            reportsize if reportsize is None else 'null',
+                            json.dumps(report_status),
+                            timezone.dbtime()
+                        ))
                     conn.commit()
 
-        if report_status and report_status["status"] == "Succeed":
+        if report_status and report_populate_status["status"] == "Succeed":
             #clean the expired cache
             cache_dir = datasetinfo.get("cache") if datasetinfo else None
             if cache_dir: 
