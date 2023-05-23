@@ -2041,7 +2041,10 @@ def generate_report(reportid):
         #init the folder to place the report file
         cache_dir = datasetinfo.get("cache")
         report_cache_dir = os.path.join(cache_dir,"report")
-        reportfile_folder = os.path.join(report_cache_dir,report_start.strftime("%Y-%m-%d"))
+        if periodic_report:
+            reportfile_folder = os.path.join(report_cache_dir,"periodic",reportid)
+        else:
+            reportfile_folder = os.path.join(report_cache_dir,"adhoc",report_start.strftime("%Y-%m-%d"))
         utils.mkdir(reportfile_folder)
 
         if resultset == "__details__":
@@ -2065,7 +2068,7 @@ def generate_report(reportid):
                 reportsize = None
                 return 
 
-            reportfile = os.path.join(reportfile_folder,"nginxaccesslog-report-{}{}".format(reportid,os.path.splitext(result[0][3])[1]))
+            reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}{}".format(reportid,report_name.replace(" ","_"),timezone.format(report_start,"%Y%m%d%H"),timezone.format(report_end,"%Y%m%d%H"),report_type,os.path.splitext(result[0][3])[1]))
             if report_header_file:
                 #write the data header as report header
                 files = [r[3] for r in result]
@@ -2091,8 +2094,8 @@ def generate_report(reportid):
                 reportsize = utils.get_line_counter(reportfile)
             return 
         else:
-            reportfile_raw = os.path.join(reportfile_folder,"nginxaccesslog-report-{}-raw.csv".format(reportid))
-            reportfile = os.path.join(reportfile_folder,"nginxaccesslog-report-{}.csv".format(reportid))
+            reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(reportid,report_name.replace(" ","_"),timezone.format(report_start,"%Y%m%d%H"),timezone.format(report_end,"%Y%m%d%H"),report_type))
+            reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}.csv".format(reportid,report_name.replace(" ","_"),timezone.format(report_start,"%Y%m%d%H"),timezone.format(report_end,"%Y%m%d%H"),report_type))
             if report_group_by:
                 if report_type == HOURLY_REPORT:
                     #hourly report, each access log is one hour data, but buffer can split a log file into multiple seciton, reduce is required.
@@ -2259,14 +2262,14 @@ def generate_report(reportid):
                         cursor.execute("update datascience_periodicreportinstance set rawfile='{1}',reportsize={2}, status='{3}' where id = {0}".format(
                             reportid,
                             reportfile if reportfile else 'null',
-                            reportsize if reportsize is None else 'null',
+                            'null' if reportsize is None else reportsize,
                             json.dumps(report_status)
                         ))
                     else:
                         cursor.execute("update datascience_report set reportfile='{1}',reportsize={2}, status='{3}', exec_end='{4}' where id = {0}".format(
                             reportid,
                             reportfile if reportfile else 'null',
-                            reportsize if reportsize is None else 'null',
+                            'null' if reportsize is None else reportsize,
                             json.dumps(report_status),
                             timezone.dbtime()
                         ))

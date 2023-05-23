@@ -33,8 +33,8 @@ def parse(dt,pattern,timezone=None):
 def dbtime(dt=None):
     return localtime(dt).strftime("%Y-%m-%d %H:%M:%S%z")
 
-def format(dt=None):
-    return localtime(dt).strftime("%Y-%m-%d %H:%M:%S")
+def format(dt=None,pattern="%Y-%m-%d %H:%M:%S"):
+    return localtime(dt).strftime(pattern)
 
 def timestamp(dt=None):
     return  localtime(dt,timezone=timezone.utc).timestamp()
