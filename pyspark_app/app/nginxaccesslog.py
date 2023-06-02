@@ -1159,12 +1159,13 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                         buffer_size = None
                         for item in resultset:
                             if item[0] == '*':
-                                continue
-                            col = ExecutorContext.column_map[item[0]]
-                            size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
+                                size = dataset_size
+                            else:
+                                col = ExecutorContext.column_map[item[0]]
+                                size = col[EXECUTOR_COLUMNINFO].get("buffer_size") or datasetinfo["generate_report"].get("buffer_size") or dataset_size
 
-                            if size > dataset_size:
-                               size = dataset_size
+                                if size > dataset_size:
+                                   size = dataset_size
 
                             if buffer_size is None:
                                 buffer_size = size
