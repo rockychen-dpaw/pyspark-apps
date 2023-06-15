@@ -27,7 +27,7 @@ def localtime(dt=None,timezone=None):
         dt = timezone.normalize(dt)
     return dt
 
-def parse(dt,pattern,timezone=None):
+def parse(dt,pattern="%Y-%m-%d %H:%M:%S",timezone=None):
     return make_aware(datetime.strptime(dt,pattern),timezone=timezone)
 
 def dbtime(dt=None):
