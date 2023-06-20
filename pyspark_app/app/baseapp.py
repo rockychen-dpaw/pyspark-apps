@@ -227,8 +227,8 @@ class DatasetConfig(object):
 
     def get_srcdatafilereader(self,file):
         try:
-            if "has_header" in self.datasetinfo["datafile"]:
-                return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=self.datasetinfo["datafile"]["has_header"])
+            if "has_header" in self.datasetinfo["download"]:
+                return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=self.datasetinfo["download"]["has_header"])
             else:
                 return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"))
         except KeyError as ex:
@@ -236,7 +236,7 @@ class DatasetConfig(object):
 
     def get_datafilereader(self,file):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"))
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=False)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
