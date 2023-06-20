@@ -46,15 +46,17 @@ class TimeInterval(object):
 
     @classmethod
     def format4filename(cls,t):
-        return timezone.format(self.starttime,self.PATTERN4FILENAME)
+        return timezone.format(t,cls.PATTERN4FILENAME)
+
+    @classmethod
+    def format(cls,t):
+        return timezone.format(t,cls.PATTERN)
 
     @classmethod
     def intervals(cls,offset=0,starttime=None,endtime=None):
         now = timezone.localtime()
         endtime = endtime or now
-        tmp_time = cls._interval_starttime(endtime)
-        if tmp_time != endtime:
-            endtime = cls.interval_endtime(tmp_time) 
+        endtime = cls._interval_starttime(endtime)
         istarttime = cls.interval_starttime(offset=offset,starttime=starttime)
         while True:
             iendtime = cls.interval_endtime(istarttime)
@@ -65,9 +67,10 @@ class TimeInterval(object):
                 return
  
 class Monthly(TimeInterval):
-    ID = 101
+    ID = 601
     NAME ="Monthly"
     PATTERN4FILENAME = "%Y%m%d"
+    PATTERN = "%Y-%m-%d 00:00:00"
 
     MAX_OFFSET = 28 * 86400
     
@@ -104,6 +107,7 @@ class Weekly(TimeInterval):
     TASK_INTERVAL = timedelta(days=7)
     MAX_OFFSET = TASK_INTERVAL.total_seconds()
     PATTERN4FILENAME = "%Y%m%d"
+    PATTERN = "%Y-%m-%d 00:00:00"
 
     @classmethod
     def _interval_starttime(cls,t):
@@ -120,13 +124,13 @@ class Weekly(TimeInterval):
 
 
 class MondayBasedWeekly(Weekly):
-    ID = 201
+    ID = 501
     NAME = "MondayBasedWeekly"
 
     week_startday = 0
 
 class MondayBasedFourWeekly(MondayBasedWeekly):
-    ID = 204
+    ID = 504
     NAME = "MondayBasedFourWeekly"
 
     week_startday = 0
@@ -134,13 +138,13 @@ class MondayBasedFourWeekly(MondayBasedWeekly):
     MAX_OFFSET = TASK_INTERVAL.total_seconds()
 
 class SundayBasedWeekly(Weekly):
-    ID = 261
+    ID = 561
     NAME = "SundayBasedWeekly"
 
     week_startday = 6
 
 class SundayBasedFourWeekly(SundayBasedWeekly):
-    ID = 264
+    ID = 564
     NAME = "SundayBasedFourWeekly"
 
     TASK_INTERVAL = timedelta(days=28)
@@ -148,13 +152,13 @@ class SundayBasedFourWeekly(SundayBasedWeekly):
     week_startday = 6
 
 class SaturdayBasedWeekly(Weekly):
-    ID = 251
+    ID = 551
     NAME = "SaturdayBasedWeekly"
 
     week_startday = 5
 
 class SaturdayBasedFourWeekly(SaturdayBasedWeekly):
-    ID = 254
+    ID = 554
     NAME = "SaturdayBasedFourWeekly"
 
     TASK_INTERVAL = timedelta(days=28)
@@ -162,9 +166,10 @@ class SaturdayBasedFourWeekly(SaturdayBasedWeekly):
     week_startday = 5
 
 class Daily(TimeInterval):
-    ID = 301
+    ID = 401
     NAME = "Daily"
     PATTERN4FILENAME = "%Y%m%d"
+    PATTERN = "%Y-%m-%d 00:00:00"
 
     TASK_INTERVAL = timedelta(days=1)
     MAX_OFFSET = TASK_INTERVAL.total_seconds()
@@ -178,9 +183,10 @@ class Daily(TimeInterval):
             return t
 
 class Hourly(TimeInterval):
-    ID = 401
+    ID = 301
     NAME = "Hourly"
     PATTERN4FILENAME = "%Y%m%d%H"
+    PATTERN = "%Y-%m-%d %H:00:00"
 
     TASK_INTERVAL = timedelta(hours=1)
     MAX_OFFSET = 86400
@@ -194,10 +200,11 @@ class Hourly(TimeInterval):
             return t
 
 class Minutely(TimeInterval):
-    ID = 501
+    ID = 201
     NAME = "Minutely" 
     MINUTES = 1
     PATTERN4FILENAME = "%Y%m%d%H%M"
+    PATTERN = "%Y-%m-%d %H:%M:00"
 
     TASK_INTERVAL = timedelta(minutes=1)
     MAX_OFFSET = 86400
@@ -219,7 +226,7 @@ class Minutely(TimeInterval):
 
 
 class FiveMinutely(Minutely):
-    ID = 505
+    ID = 205
     NAME = "FiveMinutely"
     MINUTES = 5
 
@@ -227,7 +234,7 @@ class FiveMinutely(Minutely):
     MAX_OFFSET = 86400
 
 class TenMinutely(Minutely):
-    ID = 510
+    ID = 210
     NAME = "TenMinutely"
     MINUTES = 10
 
@@ -235,7 +242,7 @@ class TenMinutely(Minutely):
     MAX_OFFSET = 86400
 
 class HalfHourly(Minutely):
-    ID = 530
+    ID = 230
     NAME = "HalfHourly"
     MINUTES = 30
 
