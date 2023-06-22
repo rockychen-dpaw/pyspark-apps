@@ -27,18 +27,18 @@ class TimeInterval(object):
     @classmethod
     def interval_starttime(cls,offset=0,starttime=None):
         if starttime:
-            next_starttime = cls._interval_starttime(starttime)
-            return next_starttime
+            return cls._interval_starttime(starttime)
         else:
             now = timezone.localtime()
-            starttime = cls._interval_starttime(now)
+            #the end time of the interval before the current interval
+            endtime = cls._interval_starttime(now)
 
-            if (now - starttime).total_seconds() >= offset:
-                next_starttime = cls.previous_interval(starttime)
-            else:
-                next_starttime = cls.previous_interval(cls.previous_interval(starttime))
+            #get the end time of the interval after considering the offset
+            while (now - endtime).total_seconds() < offset:
+                endtime = cls.previous_interval(endtime)
 
-            return next_starttime
+            #return the start time of the interval
+            return cls.previous_interval(endtime)
 
     @classmethod
     def _interval_starttime(cls,t):

@@ -1198,7 +1198,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         else:
                             report_size = np.count_nonzero(cond_result)
                             indexes = np.flatnonzero(cond_result)
-                            with self.get_datafilewriter(reportfile) as reportwriter:
+                            with self.get_datafilewriter(file=reportfile) as reportwriter:
                                 reportwriter.writerows(self.report_details(data_file,indexes))
                             return [(data[0],data[1],data[2],report_size,reportfile)]
     
