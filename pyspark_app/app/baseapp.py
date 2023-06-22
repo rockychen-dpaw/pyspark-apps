@@ -2343,16 +2343,16 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         if self.periodic_report:
                             self.report_populate_status["exec_end"] = timezone.format()
     
-                            cursor.execute("update datascience_periodicreportinstance set rawfile='{1}',reportsize={2}, status='{3}' where id = {0}".format(
+                            cursor.execute("update datascience_periodicreportinstance set rawfile={1},reportsize={2}, status='{3}' where id = {0}".format(
                                 self.reportid,
-                                reportfile if reportfile else 'null',
+                                "'{}'".format(reportfile) if reportfile else 'null',
                                 'null' if reportsize is None else reportsize,
                                 json.dumps(self.report_status)
                             ))
                         else:
-                            cursor.execute("update datascience_report set reportfile='{1}',reportsize={2}, status='{3}', exec_end='{4}' where id = {0}".format(
+                            cursor.execute("update datascience_report set reportfile={1},reportsize={2}, status='{3}', exec_end='{4}' where id = {0}".format(
                                 self.reportid,
-                                reportfile if reportfile else 'null',
+                                "'{}'".format(reportfile) if reportfile else 'null',
                                 'null' if reportsize is None else reportsize,
                                 json.dumps(self.report_status),
                                 timezone.dbtime()
