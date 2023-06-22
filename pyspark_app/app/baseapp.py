@@ -1481,7 +1481,6 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             start_index += buffer_size
                         
                 logger.debug("{} : Return the result from executor.reportid={}, access log file={}".format(utils.get_processid(),self.reportid,data[2]))
-                logger.debug("****************\n{}".format(result))
                 return result
         finally:
             pass
@@ -1883,8 +1882,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
             self.task_timestamp = timezone.timestamp()
 
-            logger.debug("Begin to generate the report({})".format(self.reportid))
             self.load_env()
+            logger.debug("Begin to generate the report({})".format(self.reportid))
             self.load_app_config()
             self.post_init()
             self.find_datafiles()
