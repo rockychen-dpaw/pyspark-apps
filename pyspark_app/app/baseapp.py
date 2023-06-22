@@ -1555,6 +1555,9 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
         if not concurrency or len(self.datafiles) < concurrency:
             concurrency = len(self.datafiles)
 
+        if not concurrency:
+            concurrency = 1
+
         rdd = spark.sparkContext.parallelize(self.datafiles, concurrency) 
         rdd = rdd.flatMap(DatasetAppDownloadExecutor(self.task_timestamp,self.databaseurl,self.datasetid,self.datasetinfo,self.dataset_refresh_requested,1).run)
         result = rdd.collect()
@@ -1875,6 +1878,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         generate report
         """
         try:
+            reportfile = None
+            reportsize = None
+
             self.task_timestamp = timezone.timestamp()
 
             logger.debug("Begin to generate the report({})".format(self.reportid))
@@ -1890,9 +1896,6 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 logger.info("No {0} file was downloaded.".format(self.datasetname))
 
     
-            reportfile = None
-            reportsize = None
-
             if self.missingfiles:
                 if self.report_populate_status is None:
                     self.report_populate_status = {"message":"The files({}) are missing".format(" , ".join(self.missingfiles))}
