@@ -1,6 +1,8 @@
 from .. import settings
 from datetime import datetime,timezone
 
+UTC = timezone.utc
+
 def get_current_timezone():
     return settings.TIMEZONE
 
@@ -33,8 +35,8 @@ def parse(dt,pattern="%Y-%m-%d %H:%M:%S",timezone=None):
 def dbtime(dt=None):
     return localtime(dt).strftime("%Y-%m-%d %H:%M:%S%z")
 
-def format(dt=None,pattern="%Y-%m-%d %H:%M:%S"):
-    return localtime(dt).strftime(pattern)
+def format(dt=None,pattern="%Y-%m-%d %H:%M:%S",timezone=None):
+    return localtime(dt,timezone=timezone).strftime(pattern)
 
 def timestamp(dt=None):
     return  localtime(dt,timezone=timezone.utc).timestamp()

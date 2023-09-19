@@ -18,11 +18,13 @@ setup(
     install_requires=[
         'numpy==1.24.2',
         'pandas==1.5.3',
+        'requests==2.31.0',
         'h5py==3.8.0',
         'pytz==2022.7.1',
         'psutil==5.9.4',
         'azure-storage-blob==12.15.0',
-        'maxminddb==2.2.0'
+        'maxminddb==2.2.0',
+        'msal == 1.12.0"
     ],
     classifiers=[
         'Framework :: Pyspark',
