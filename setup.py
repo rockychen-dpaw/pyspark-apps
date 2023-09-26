@@ -24,7 +24,7 @@ setup(
         'psutil==5.9.4',
         'azure-storage-blob==12.15.0',
         'maxminddb==2.2.0',
-        'msal == 1.12.0"
+        'msal==1.12.0'
     ],
     classifiers=[
         'Framework :: Pyspark',

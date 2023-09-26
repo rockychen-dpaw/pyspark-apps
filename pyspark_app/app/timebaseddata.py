@@ -1,7 +1,6 @@
 import logging
 import traceback
 import os
-
 from pyspark_app.utils import timezone
 
 from pyspark_app import intervals
