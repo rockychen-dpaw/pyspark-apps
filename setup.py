@@ -5,7 +5,7 @@ from setuptools import setup
 setup(
     name='pyspark-apps',
     version='1.0.0',
-    packages=['pyspark_app','pyspark_app.app','pyspark_app.harvester','pyspark_app.operation','pyspark_app.utils','pyspark_app.datatransformer'],
+    packages=['pyspark_app','pyspark_app.app','pyspark_app.harvester','pyspark_app.operation','pyspark_app.utils','pyspark_app.datatransformer','pyspark_app.datafile'],
     description='Pyspark applications to generate data report on all kinds of big data',
     url='https://github.com/dbca-wa/pyspark-apps',
     author='Department of Biodiversity, Conservation and Attractions',
