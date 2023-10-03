@@ -106,9 +106,10 @@ class ExecutorContext(object):
 
             return False
 
+valueat = lambda l,index: l[index] if index < len(l) else None
+
 class DatasetConfig(object):
     _harvester = None
-
 
     def datasetconfig_validate(self):
         if not self.datasetinfo :
@@ -227,18 +228,24 @@ class DatasetConfig(object):
 
     def get_srcdatafilereader(self,file):
         try:
-            if "has_header" in self.datasetinfo["download"]:
-                return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=self.datasetinfo["download"]["has_header"])
-            else:
-                return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"))
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=self.has_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
-    def get_datafilereader(self,file):
+    def get_datafilereader(self,file,has_header=None):
+        if has_header is None:
+            has_header = self.has_header
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=False)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=has_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
+
+    @property
+    def has_header(self):
+        try:
+            return self.datasetinfo["download"]["has_header"]
+        except:
+            return False
 
     @property
     def data_headers(self):
@@ -246,7 +253,16 @@ class DatasetConfig(object):
             return self.datasetinfo["datafile"].get("headers")
         except:
             return None
-        
+
+    def set_data_headers(self,headers):
+        self.datasetinfo["datafile"]["headers"] = headers
+
+    @classmethod
+    def get_data_headers(cls,datasetinfo):
+        try:
+            return datasetinfo["datafile"].get("headers")
+        except:
+            return None
 
     @property
     def databuffer_size(self):
@@ -416,6 +432,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
         import numpy as np
         try:
             dataset_time = timezone.parse(data[0])
+            dataset_endtime = timezone.parse(data[1])
 
             if not ExecutorContext.can_share_context(self.task_timestamp,None,ExecutorContext.DOWNLOAD,self.datasetid):
                 ExecutorContext.buffer_size = self.indexbuffer_size
@@ -428,6 +445,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 ExecutorContext.allreportcolumns = {}
                 with database.Database(self.databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
+                        #load dataset columns
                         cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                         previous_columnindex = None
                         columns = None
@@ -569,7 +587,41 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 else:
                                     with tempfile.NamedTemporaryFile(prefix="dataset_{}".format(self.datasetid),delete=False) as f:
                                         src_data_file = f.name
-                                    ExecutorContext.resource_harvester.saveas(data[2],src_data_file)
+
+                                    while True:
+                                        columns_changed,columns = ExecutorContext.resource_harvester.saveas(data[2],src_data_file,columns=self.data_headers,starttime=dataset_time,endtime=dataset_endtime)
+                                        if columns_changed:
+                                            #columns changed, update the datasetinfo
+                                            with database.Database(self.databaseurl).get_conn(True) as conn:
+                                                with conn.cursor() as cursor:
+                                                    try:
+                                                        #first lock the record
+                                                        cursor.execute("select datasetinfo from datascience_dataset where id = {0} for update;".format(
+                                                            self.datasetid
+                                                        ))
+                                                        new_headers = DatasetConfig.get_data_headers(cursor.fetchone()[0])
+                                                        if self.data_headers == new_headers:
+                                                            #headers in database is not changed,update the headers in database
+                                                            self.set_data_headers(columns)
+                                                            cursor.execute("update datascience_dataset set datasetinfo='{1}', modified='{2}' where id = {0};".format(
+                                                                self.datasetid,
+                                                                json.dumps(self.datasetinfo),
+                                                                timezone.dbtime()
+                                                            ))
+                                                            break
+                                                        elif columns == new_headers:
+                                                            logger.debug("Columns in db has been changed by other process, but the changed columns in db is equal with the changed columns")
+                                                            self.set_data_headers(columns)
+                                                            break
+                                                        else:
+                                                            logger.debug("Columns has been changed by other process, do it again with the new columns in db")
+                                                            self.set_data_headers(new_headers)
+                                                            continue
+                                                    finally:
+                                                        #commit the change and release the lock
+                                                        conn.commit()
+                                        else:
+                                            break
     
                             #generate index file
                             tmp_index_file = "{}.tmp".format(data_index_file)
@@ -600,7 +652,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 #the local cached data file doesnot exist, 
                                 #should generate the local cached data file by excluding the noisy data from original dataset.
                                 tmp_data_file = "{}.tmp".format(data_file)
-                                datafilewriter = self.get_datafilewriter(file=tmp_data_file)
+                                datafilewriter = self.get_datafilewriter(file=tmp_data_file,headers=self.data_headers if self.has_header else None)
                                 if not ExecutorContext.databuff:
                                     ExecutorContext.databuffer_size = self.databuffer_size
                                     ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
@@ -625,7 +677,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 #data are retrieved from source, should execute the filter logic
                                                 excluded = False
                                                 for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                                    value = item[columnindex]
+                                                    value = valueat(item,columnindex)
                                                     excluded = False
                                                     if  reportcolumns[0] and not reportcolumns[0](value):
                                                         #excluded
@@ -645,7 +697,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                             
                                             #generate the dataset for each index column
                                             for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                                value = item[columnindex]
+                                                value = valueat(item,columnindex)
     
                                                 for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
                                                     if  not column_filterable and not column_groupable and not column_statistical:
@@ -815,17 +867,28 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
         self.resultset = resultset
         self.report_type = report_type
          
-    def report_details(self,data_file,indexes):
-        index_index = 0
-        row_index = 0
-        with self.get_datafilereader(data_file) as datareader:
-            for row in datareader.rows:
-                if row_index == indexes[index_index]:
+    def report_details(self,data_file,indexes,include_header=False):
+        if indexes == "__all__":
+            with self.get_datafilereader(data_file) as datareader:
+                if self.has_header and include_header:
+                    yield datareader.headers
+    
+                for row in datareader.rows:
                     yield row
-                    index_index += 1
-                    if index_index >= len(indexes):
-                        break
-                row_index += 1
+        else:
+            index_index = 0
+            row_index = 0
+            with self.get_datafilereader(data_file) as datareader:
+                if self.has_header and include_header:
+                    yield datareader.headers
+    
+                for row in datareader.rows:
+                    if row_index == indexes[index_index]:
+                        yield row
+                        index_index += 1
+                        if index_index >= len(indexes):
+                            break
+                    row_index += 1
 
     def run(self,data):
         """
@@ -1038,11 +1101,13 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
     
             with h5py.File(data_index_file,'r') as index_h5:
                 #filter the dataset
+                if not index_h5.values():
+                    dataset_size = 0
                 for ds in index_h5.values():
                     dataset_size = ds.shape[0]
                     break
 
-                if self.report_conditions:
+                if self.report_conditions and dataset_size:
                     #apply the conditions, try to share the np array among conditions to save memory
 
                     if ExecutorContext.cond_result is None:
@@ -1184,23 +1249,30 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                     #return the detail logs
                     if filtered_rows == 0:
                         logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_processid(),data[2],self.report_conditions))
-                        return [(data[0],data[1],data[2],0,None)]
+                        return [(data[0],data[1],data[2],0,len(self.data_headers) if self.data_headers else 0,None)]
                     else:
                         reportfile_folder = os.path.join(ExecutorContext.report_cache_dir,"tmp")
                         utils.mkdir(reportfile_folder)
                         reportfile = os.path.join(reportfile_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[2]),self.reportid,data[0]))
                         logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_processid(),data[2],self.report_conditions))
+                        #return a result file without headers
                         if filtered_rows == dataset_size:
                             #all logs are returned
                             #unlikely to happen.
-                            shutil.copyfile(data_file,reportfile)
-                            return [(data[0],data[1],data[2],dataset_size,reportfile)]
+                            if self.has_header:
+                                #remove the header for result report file
+                                with self.get_datafilewriter(file=reportfile) as reportwriter:
+                                    reportwriter.writerows(self.report_details(data_file,"__all__",include_header=False))
+                            else:
+                                shutil.copyfile(data_file,reportfile)
+
+                            return [(data[0],data[1],data[2],dataset_size,len(self.data_headers) if self.data_headers else 0,reportfile)]
                         else:
                             report_size = np.count_nonzero(cond_result)
                             indexes = np.flatnonzero(cond_result)
                             with self.get_datafilewriter(file=reportfile) as reportwriter:
-                                reportwriter.writerows(self.report_details(data_file,indexes))
-                            return [(data[0],data[1],data[2],report_size,reportfile)]
+                                reportwriter.writerows(self.report_details(data_file,indexes,include_header=False))
+                            return [(data[0],data[1],data[2],report_size,len(self.data_headers) if self.data_headers else 0,reportfile)]
     
                 elif self.report_group_by :
                     #'group by' enabled
@@ -1524,17 +1596,26 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
         if not self.databaseurl:
             raise Exception("Missing env variable 'DATABASEURL'")
 
+    def load_dataset(self):
+        with database.Database(self.databaseurl).get_conn(True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("select name,datasetinfo,refresh_requested,modified from datascience_dataset where id = {}".format(self.datasetid))
+                dataset = cursor.fetchone()
+                if dataset is None:
+                    raise Exception("Dataset({}) doesn't exist.".format(self.datasetid))
+                self.datasetname,self.datasetinfo,self.dataset_refresh_requested,self.dataset_modified = dataset
+
     def load_app_config(self):
         with database.Database(self.databaseurl).get_conn(True) as conn:
             with conn.cursor() as cursor:
                 self._load_app_config(conn,cursor)
 
     def _load_app_config(self,conn,cursor):
-        cursor.execute("select name,datasetinfo,refresh_requested from datascience_dataset where id = {}".format(self.datasetid))
+        cursor.execute("select name,datasetinfo,refresh_requested,modified from datascience_dataset where id = {}".format(self.datasetid))
         dataset = cursor.fetchone()
         if dataset is None:
             raise Exception("Dataset({}) doesn't exist.".format(self.datasetid))
-        self.datasetname,self.datasetinfo,self.dataset_refresh_requested = dataset
+        self.datasetname,self.datasetinfo,self.dataset_refresh_requested,self.dataset_modified = dataset
 
         cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(self.datasetid))
         for row in cursor.fetchall():
@@ -2105,17 +2186,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
             if self.resultset == "__details__":
                 result = rdd.collect()
                 result.sort()
-                if self.data_headers:
-                    report_header_file = os.path.join(report_cache_dir,"detail_report_header.csv")
-                    if not os.path.exists(report_header_file):
-                        #report_header_file does not exist, create it
-                        with open(report_header_file,'w') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(self.data_headers)
-                else:
-                    report_header_file = None
-    
-                result = [r for r in result if r[4]]
+                #filter out the empty result
+                result = [r for r in result if r[5]]
                 if len(result) == 0:
                     logger.debug("No data found")
                     self.report_populate_status["status"] = "Succeed"
@@ -2123,6 +2195,36 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     reportsize = None
                     return 
 
+                max_columns = 0
+                has_same_columns = True
+                for r in result:
+                    if not max_columns:
+                        max_columns = r[4]
+                    elif max_columns < r[4]:
+                        max_columns = r[4]
+                        has_same_columns = False
+                    elif max_columns > r[4]:
+                        has_same_columns = False
+
+                if max_columns and max_columns != len(self.data_headers):
+                    #reload dataset info
+                    self.load_dataset()
+
+                if max_columns and (not self.data_headers or len(self.data_headers) < max_columns):
+                    raise Exception("Only found {1} columns for dataset({0}), but expect {2} columns".format(self.datasetname,len(self.data_headers),max_columns))
+
+                if max_columns:
+                    report_header_file = os.path.join(report_cache_dir,"detail_report_header_{}.csv".format(max_columns))
+                    if not os.path.exists(report_header_file) or utils.file_mtime(report_header_file) < self.dataset_modified:
+                        #report_header_file does not exist or outdated, create it
+                        logger.debug("Create report header file '{}'".format(report_header_file))
+                        with open(report_header_file,'w') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(self.data_headers[:max_columns])
+                        utils.set_file_mtime()
+                else:
+                    report_header_file = None
+    
                 if self.report_interval:
                     reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}{}".format(
                         self.reportid,
@@ -2130,7 +2232,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         self.report_interval.format4filename(self.starttime),
                         self.report_interval.format4filename(self.endtime),
                         self.report_type.NAME,
-                        os.path.splitext(result[0][4])[1])
+                        os.path.splitext(result[0][5])[1])
                     )
                 else:
                     reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}{}".format(
@@ -2139,22 +2241,41 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         self.report_type.format4filename(self.starttime),
                         self.report_type.format4filename(self.endtime),
                         self.report_type.NAME,
-                        os.path.splitext(result[0][4])[1])
+                        os.path.splitext(result[0][5])[1])
                     )
+
                 if report_header_file:
+                    if not has_same_columns:
+                        #returned report files have different columns, overwrite the report to make sure that all report files have the same columns
+                        rowdata = [None] * max_columns
+                        for r in result:
+                            if r[4] == max_columns:
+                                continue
+                            new_report_file = "tmp-{}".format(r[5])
+                            with self.get_datafilewriter(file=new_report_file) as writer:
+                                with self.get_datafilereader(r[5],has_header=False) as reader:
+                                    for row in reader.rows:
+                                        for i in range(row):
+                                            rowdata[i] = row[i]
+                                        writer.writerow(rowdata)
+                            #overwrite the report file with new tmp file
+                            shutil.move(new_report_file,r[5])
+
                     #write the data header as report header
-                    files = [r[4] for r in result]
+                    files = [r[5] for r in result]
                     files.insert(0,report_header_file)
                     utils.concat_files(files,reportfile)
                     for r in result:
-                        utils.remove_file(r[4])
+                        utils.remove_file(r[5])
+                        
                 else:
                     if len(result) == 1:
-                        os.rename(result[0][4],reportfile)
+                        os.rename(result[0][5],reportfile)
                     else:
-                        utils.concat_files([r[4] for r in result],reportfile)
+                        utils.concat_files([r[5] for r in result],reportfile)
                         for r in result:
-                            utils.remove_file(r[4])
+                            utils.remove_file(r[5])
+
                 logger.debug("report file = {}".format(reportfile))
                 self.report_populate_status["status"] = "Succeed"
                 if report_header_file:

@@ -4,6 +4,7 @@ import logging
 from collections import OrderedDict
 from .localfs import LocalResourceHarvester
 from .blobstorage import AzureBlobStorageHarvester
+from .adb2cauditlog import ADB2CAuditLogHarvester
 from . import exceptions
 
 logger = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 _harvester_map = OrderedDict()
 harvesters = []
 
-for h in [LocalResourceHarvester,AzureBlobStorageHarvester]:
+for h in [LocalResourceHarvester,AzureBlobStorageHarvester,ADB2CAuditLogHarvester]:
     _harvester_map[h.__name__] = h
     harvesters.append((h.__name__,h.__name__))
 

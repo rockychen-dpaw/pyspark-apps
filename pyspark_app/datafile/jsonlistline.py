@@ -138,7 +138,11 @@ class JSONLineWriter(object):
         self.file = file
         self.headers = headers
         self.file_output = file_output
-        self.first_row = True
+        if self.headers:
+            self.file_output.write(json.dumps(self.headers,cls=serializers.JSONFormater))
+            self.first_row = False
+        else:
+            self.first_row = True
 
     def writerows(self,rows):
         if not self.file_output:
@@ -168,9 +172,9 @@ class JSONLineWriter(object):
             
         if self.first_row:
             self.first_row = False
-            self.file_output.write("\r\n{}".format(json.dumps(row,cls=serializers.JSONFormater)))
+            self.file_output.write(json.dumps(row,cls=serializers.JSONFormater))
         else:
-            output.write(json.dumps(row,cls=serializers.JSONFormater))
+            self.file_output.write("\r\n{}".format(json.dumps(row,cls=serializers.JSONFormater)))
 
     def writerow(self,row):
         if not self.file_output:

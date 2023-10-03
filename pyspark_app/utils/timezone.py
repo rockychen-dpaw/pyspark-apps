@@ -1,7 +1,12 @@
+import pytz
+
 from .. import settings
 from datetime import datetime,timezone
 
 UTC = timezone.utc
+
+def get_timezone(tz):
+    return pytz.timezone(tz) if tz else get_current_timezone()
 
 def get_current_timezone():
     return settings.TIMEZONE
@@ -44,6 +49,9 @@ def timestamp(dt=None):
 def make_aware(dt, timezone=None):
     if timezone is None:
         timezone = get_current_timezone()
+    if isinstance(timezone,str):
+        timezone = pytz.timezone(timezone)
+
     if hasattr(timezone, 'localize'):
         # This method is available for pytz time zones.
         return timezone.localize(dt, is_dst=None)

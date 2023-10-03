@@ -1,5 +1,5 @@
 class ResourceHarvester(object):
-    def saveas(self,resource,f):
+    def saveas(self,resource,f,columns=None,starttime=None,endtime=None):
         """
         Save the resource to the file 
         Parameters:

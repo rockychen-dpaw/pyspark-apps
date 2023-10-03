@@ -8,13 +8,18 @@ file_ext = ".csv"
 description="Export report data as csv "
 
 def writer(file=None,**kwargs):
+    if "headers" in kwargs:
+        headers = kwargs.pop("headers")
+    else:
+        headers = None
+
     if file:
         #normal file
-        return CSVWriter(file,open(file,'w'))
+        return CSVWriter(file,open(file,'w'),headers=headers)
     else:
         #tempfile
         output = tempfile.NamedTemporaryFile(mode='w',**kwargs)
-        return CSVWriter(output.name,output)
+        return CSVWriter(output.name,output,headers=headers)
 
 def reader(file,has_header=True,headers=None):
     return CSVReader(file,has_header)
@@ -101,10 +106,13 @@ class CSVReader(object):
         return False if value else True
 
 class CSVWriter(object):
-    def __init__(self,file,file_output):
+    def __init__(self,file,file_output,headers=None):
         self.file = file
         self.file_output = file_output
+        self.headers = headers
         self.writer = csv.writer(self.file_output)
+        if self.headers:
+            self.writer.writerow(self.headers)
 
     def writerows(self,rows):
         if not self.writer:

@@ -52,18 +52,20 @@ def str2enum(key,databaseurl=None,columnid=None,pattern=None,default=None,column
                 pattern_re = re.compile(pattern)
                 pattern_map[pattern] = pattern_re
             if pattern_re.search(key):
-                valid_domain = True
+                valid_key = True
             else:
                 #not a valid domain
                 if default in enum_dicts:
                     return enum_dicts[default]
-                valid_domain = False
+                valid_key = False
         else:
-            valid_domain = True
-    
+            valid_key = True
+
+        dbkey = key.replace("'","''") 
+        sql = None
         with database.Database(databaseurl).get_conn() as conn:
             with conn.cursor() as cursor:
-                if not valid_domain:
+                if not valid_key:
                     sql = """
 INSERT INTO datascience_datasetenum 
     (column_id,key,value,info) 
@@ -77,29 +79,35 @@ SET key='{1}'
                     enum_dicts[default] = 0
                     return 0
     
-                cursor.execute("select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,key))
+                sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
+                cursor.execute(sql)
                 data = cursor.fetchone()
                 if data:
                     enum_dicts[columnid][key] = data[0]
                     return data[0]
-                cursor.execute("update datascience_datasetcolumn set sequence=COALESCE(sequence,0) + 1,modified='{1}' where id = {0} ".format(columnid,timezone.dbtime()))
+
+                sql = "update datascience_datasetcolumn set sequence=COALESCE(sequence,0) + 1,modified='{1}' where id = {0} ".format(columnid,timezone.dbtime())
+                cursor.execute(sql)
                 if cursor.rowcount == 0:
                     raise Exception("Dataset Column({}) does not exist".format(columnid))
-                cursor.execute("select sequence from datascience_datasetcolumn where id = {}".format(columnid))
+                sql = "select sequence from datascience_datasetcolumn where id = {}".format(columnid)
+                cursor.execute(sql)
                 try:
                     sequence = cursor.fetchone()[0]
-                    cursor.execute("insert into datascience_datasetenum (column_id,key,value,info) values ({},'{}',{},'{{}}')".format(columnid,key,sequence))
+                    sql = "insert into datascience_datasetenum (column_id,key,value,info) values ({},'{}',{},'{{}}')".format(columnid,dbkey,sequence)
+                    cursor.execute(sql)
                     conn.commit()
                 except:
                     #should already exist, if database is accessable
                     conn.rollback()
-                    cursor.execute("select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,key))
+                    sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
+                    cursor.execute(sql)
                     sequence = cursor.fetchone()[0]
         
                 enum_dicts[columnid][key] = sequence
                 return sequence
     except:
-        logger.error("Failed to convert the value({1}) of column({0}) to enum. {2}".format(columnname,key,traceback.format_exc()))
+        logger.error("Failed to convert the value({1}) of column({0}) to enum.sql={2}{3}{4}".format(columnname,key,sql,os.linesep,traceback.format_exc()))
         raise
 
 
@@ -298,6 +306,9 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
         logger.debug("{} : Open GeoLite2-City.mmdb.".format(get_processid()))
         _city_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-City.mmdb'))
 
+    if not ip:
+        #no ip address, 
+        return 0
     result = _city_reader.get(ip)
     try:
         if result:
@@ -389,7 +400,9 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
             raise Exception("Please configure env var 'GEOIP_DATABASE_HOME'")
         logger.debug("{} : Open GeoLite2-Country.mmdb.".format(get_processid()))
         _country_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-Country.mmdb'))
-
+  
+    if not ip:
+        return 0
     result = _country_reader.get(ip)
     if result:
         try:

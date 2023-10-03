@@ -168,9 +168,9 @@ class JSONLineWriter(object):
             
         if self.first_row:
             self.first_row = False
-            self.file_output.write("\r\n{}".format(json.dumps(row,cls=serializers.JSONFormater)))
+            self.file_output.write(json.dumps(row,cls=serializers.JSONFormater))
         else:
-            output.write(json.dumps(row,cls=serializers.JSONFormater))
+            self.file_output.write("\r\n{}".format(json.dumps(row,cls=serializers.JSONFormater)))
 
     def writerow(self,row):
         if not self.file_output:

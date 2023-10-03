@@ -20,11 +20,11 @@ class AzureBlobStorageHarvester(ResourceHarvester):
             self._path = path
         return self._client
 
-    def saveas(self,path,filename):
+    def saveas(self,path,destfilename,columns=None,starttime=None,endtime=None):
         """
         Download the blob resource to a file
         """
-        logger.debug("Try to download the file({}) from blob storage to local file({})".format(path,filename))
+        logger.debug("Try to download the file({}) from blob storage to local file({})".format(path,destfilename))
         if not self._get_blob_client(path).exists():
             raise ResourceNotFound(path)
 
@@ -32,7 +32,7 @@ class AzureBlobStorageHarvester(ResourceHarvester):
         blob_size = self._get_blob_client(path).get_blob_properties().size
         length = self._chunk_size
 
-        with open(filename,'wb') as f:
+        with open(destfilename,'wb') as f:
             while True:
                 size  = self._get_blob_client(path).download_blob(offset=offset,length=length).readinto(f)
                 logger.debug("Offset = {}, length={},readed data={}, blob size={}".format(offset,length,size,blob_size))
@@ -45,6 +45,8 @@ class AzureBlobStorageHarvester(ResourceHarvester):
                         length = self._chunk_size
                     elif length == 0:
                         break
+
+        return (False,columns)
 
 
 
