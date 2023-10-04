@@ -2221,7 +2221,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         with open(report_header_file,'w') as f:
                             writer = csv.writer(f)
                             writer.writerow(self.data_headers[:max_columns])
-                        utils.set_file_mtime()
+                        utils.set_file_mtime(report_header_file)
                 else:
                     report_header_file = None
     
