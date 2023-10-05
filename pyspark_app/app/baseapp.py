@@ -1705,6 +1705,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
             raise 
     
 class DatasetAppReportDriver(DatasetAppDownloadDriver):
+    periodic_reportid = None
     def __init__(self):
         super().__init__()
         #env parameters
@@ -1900,7 +1901,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         if report is None:
             raise Exception("Report({}) doesn't exist.".format(self.reportid))
         if self.periodic_report:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
         else:
             self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
 
@@ -2178,7 +2179,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
             #init the folder to place the report file
             report_cache_dir = os.path.join(self.cachefolder,"report")
             if self.periodic_report:
-                reportfile_folder = os.path.join(report_cache_dir,"periodic",self.reportid)
+                reportfile_folder = os.path.join(report_cache_dir,"periodic",self.periodic_reportid)
             else:
                 reportfile_folder = os.path.join(report_cache_dir,"adhoc",self.reporttime.strftime("%Y-%m-%d"))
             utils.mkdir(reportfile_folder)
@@ -2285,64 +2286,65 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     self.report_populate_status["report_header"] = False
                     reportsize = datafile.reader("csv",reportfile,has_header=False).records
                 return 
-            elif self.report_type == NoneReportType:
-                if self.report_interval:
-                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_interval.format4filename(self.starttime),
-                        self.report_interval.format4filename(self.endtime)
-                    ))
-                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_interval.format4filename(self.starttime),
-                        self.report_interval.format4filename(self.endtime)
-                    ))
-                else:
-                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_type.format4filename(self.starttime),
-                        self.report_type.format4filename(self.endtime)
-                    ))
-                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_type.format4filename(self.starttime),
-                        self.report_type.format4filename(self.endtime)
-                    ))
             else:
-                if self.report_interval:
-                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_interval.format4filename(self.starttime),
-                        self.report_interval.format4filename(self.endtime),
-                        self.report_type.NAME
-                    ))
-                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_interval.format4filename(self.starttime),
-                        self.report_interval.format4filename(self.endtime),
-                        self.report_type.NAME
-                    ))
+                if self.report_type == NoneReportType:
+                    if self.report_interval:
+                        reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_interval.format4filename(self.starttime),
+                            self.report_interval.format4filename(self.endtime)
+                        ))
+                        reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_interval.format4filename(self.starttime),
+                            self.report_interval.format4filename(self.endtime)
+                        ))
+                    else:
+                        reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_type.format4filename(self.starttime),
+                            self.report_type.format4filename(self.endtime)
+                        ))
+                        reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_type.format4filename(self.starttime),
+                            self.report_type.format4filename(self.endtime)
+                        ))
                 else:
-                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_type.format4filename(self.starttime),
-                        self.report_type.format4filename(self.endtime),
-                        self.report_type.NAME
-                    ))
-                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}.csv".format(
-                        self.reportid,
-                        self.report_name.replace(" ","_"),
-                        self.report_type.format4filename(self.starttime),
-                        self.report_type.format4filename(self.endtime),
-                        self.report_type.NAME
-                    ))
+                    if self.report_interval:
+                        reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_interval.format4filename(self.starttime),
+                            self.report_interval.format4filename(self.endtime),
+                            self.report_type.NAME
+                        ))
+                        reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_interval.format4filename(self.starttime),
+                            self.report_interval.format4filename(self.endtime),
+                            self.report_type.NAME
+                        ))
+                    else:
+                        reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_type.format4filename(self.starttime),
+                            self.report_type.format4filename(self.endtime),
+                            self.report_type.NAME
+                        ))
+                        reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}.csv".format(
+                            self.report_name.replace(" ","_"),
+                            self.reportid,
+                            self.report_type.format4filename(self.starttime),
+                            self.report_type.format4filename(self.endtime),
+                            self.report_type.NAME
+                        ))
 
                 if self.report_group_by:
                     if self.report_type == NoneReportType:
