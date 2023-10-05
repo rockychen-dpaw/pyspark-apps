@@ -2285,6 +2285,33 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     self.report_populate_status["report_header"] = False
                     reportsize = datafile.reader("csv",reportfile,has_header=False).records
                 return 
+            elif self.report_type == NoneReportType:
+                if self.report_interval:
+                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
+                        self.reportid,
+                        self.report_name.replace(" ","_"),
+                        self.report_interval.format4filename(self.starttime),
+                        self.report_interval.format4filename(self.endtime)
+                    ))
+                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
+                        self.reportid,
+                        self.report_name.replace(" ","_"),
+                        self.report_interval.format4filename(self.starttime),
+                        self.report_interval.format4filename(self.endtime)
+                    ))
+                else:
+                    reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-raw.csv".format(
+                        self.reportid,
+                        self.report_name.replace(" ","_"),
+                        self.report_type.format4filename(self.starttime),
+                        self.report_type.format4filename(self.endtime)
+                    ))
+                    reportfile = os.path.join(reportfile_folder,"{}-{}-{}-{}.csv".format(
+                        self.reportid,
+                        self.report_name.replace(" ","_"),
+                        self.report_type.format4filename(self.starttime),
+                        self.report_type.format4filename(self.endtime)
+                    ))
             else:
                 if self.report_interval:
                     reportfile_raw = os.path.join(reportfile_folder,"{}-{}-{}-{}-{}-raw.csv".format(
