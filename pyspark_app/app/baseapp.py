@@ -714,7 +714,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                         if column_name in tmp_h5:
                                                             indexdatasets[column_name] = tmp_h5[column_name]
                                                         else:
-                                                            indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_columninfo))
+                                                            indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_size))
                                                         indexdatasets[column_name].attrs["created"] = created
 
                                                     if column_name not in ExecutorContext.indexbuffs:
