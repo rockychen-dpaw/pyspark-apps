@@ -605,7 +605,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                             self.set_data_headers(columns)
                                                             cursor.execute("update datascience_dataset set datasetinfo='{1}', modified='{2}' where id = {0};".format(
                                                                 self.datasetid,
-                                                                json.dumps(self.datasetinfo),
+                                                                json.dumps(self.datasetinfo).replace("'","''"),
                                                                 timezone.dbtime()
                                                             ))
                                                             break
@@ -2179,7 +2179,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
             #init the folder to place the report file
             report_cache_dir = os.path.join(self.cachefolder,"report")
             if self.periodic_report:
-                reportfile_folder = os.path.join(report_cache_dir,"periodic",self.periodic_reportid)
+                reportfile_folder = os.path.join(report_cache_dir,"periodic",str(self.periodic_reportid))
             else:
                 reportfile_folder = os.path.join(report_cache_dir,"adhoc",self.reporttime.strftime("%Y-%m-%d"))
             utils.mkdir(reportfile_folder)

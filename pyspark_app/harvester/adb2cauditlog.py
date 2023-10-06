@@ -148,10 +148,10 @@ class ADB2CAuditLogHarvester(ResourceHarvester):
         )
         if columns:
             columns_changed = False
-            has_original_columns = True
+            original_columns = columns
         else:
-            columns = list(initial_columns)
-            has_original_columns = True if columns else False
+            columns = initial_columns
+            original_columns = initial_columns
             columns_changed = True if columns else False
         column_map = dict([(columns[i],i) for i in range(len(columns))])
 
@@ -163,7 +163,7 @@ class ADB2CAuditLogHarvester(ResourceHarvester):
             #save the file to a tmp file
             with open(tmpfilename,'w') as f:
                 csvwriter = csv.writer(f)
-                if has_original_columns:
+                if columns:
                     csvwriter.writerow(columns)
                 while True:
                     resp = requests.get(url, headers=headers)
@@ -181,6 +181,9 @@ class ADB2CAuditLogHarvester(ResourceHarvester):
                             if column[0] in column_map:
                                 rowdata[column_map[column[0]]] = column[1]
                             else:
+                                if id(columns) == id(original_columns):
+                                    #columns is the original columns, clone it.
+                                    columns = list(columns)
                                 columns.append(column[0])
                                 column_map[column[0]] = len(columns) - 1
                                 rowdata.append(column[1])
@@ -197,7 +200,7 @@ class ADB2CAuditLogHarvester(ResourceHarvester):
     
             #clumns changed, write again
             if columns_changed_during_processing:
-                header = has_original_columns
+                header = True if original_columns else False
                 with open(tmpfilename,'r') as f_reader:
                     with open(destfilename,'w') as f_writer:
                         csvreader = csv.reader(f_reader)
