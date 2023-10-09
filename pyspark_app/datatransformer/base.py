@@ -27,24 +27,27 @@ TIME = 403
 TIMEDELTA = 404
 
 _DATA_TYPES = {
-    BOOL:("bool","bool"),
-    STRING:(lambda size:"S{}".format(size),h5py.string_dtype(encoding='utf-8')),
-    EMAIL:("S64",h5py.string_dtype(encoding='ascii')),
-    DATETIME:("S32",h5py.string_dtype(encoding='ascii')),
-    INT8:("int8","int8"),
-    UINT8:("uint8","uint8"),
-    INT16:("int16","int16"),
-    UINT16:("uint16","uint16"),
-    INT32:("int32","int32"),
-    UINT32:("uint32","uint32"),
-    INT64:("int64","int64"),
-    UNIXTIME:("int64","int64"),
-    FLOAT16:("float16","float16"),
-    FLOAT32:("float32","float32"),
-    FLOAT64:("float64","float64"),
-    FLOAT96:("float96","float96"),
-    FLOAT128:("float128""float128")
+    BOOL:("bool","bool",False),
+    STRING:(lambda size:"S{}".format(size),h5py.string_dtype(encoding='utf-8'),b''),
+    EMAIL:("S64",h5py.string_dtype(encoding='ascii'),b''),
+    DATETIME:("S32",h5py.string_dtype(encoding='ascii'),0),
+    INT8:("int8","int8",0),
+    UINT8:("uint8","uint8",0),
+    INT16:("int16","int16",0),
+    UINT16:("uint16","uint16",0),
+    INT32:("int32","int32",0),
+    UINT32:("uint32","uint32",0),
+    INT64:("int64","int64",0),
+    UNIXTIME:("int64","int64",0),
+    FLOAT16:("float16","float16",0),
+    FLOAT32:("float32","float32",0),
+    FLOAT64:("float64","float64",0),
+    FLOAT96:("float96","float96",0),
+    FLOAT128:("float128""float128",0)
 }
+
+def get_default_value(t):
+    return _DATA_TYPES[t][2]
 
 def get_np_type(t,size=None):
     if callable(_DATA_TYPES[t][0]):

@@ -1173,7 +1173,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                                 #only read the data which is selected by the previous conditons
                                                 column_data[i] = ds[i].decode() 
                                             else:
-                                                column_data[i] = ""
+                                                column_data[i] = datatransformer.get_default_value(col[EXECUTOR_DTYPE])
                                             i += 1
                                     else:
                                         while i < dataset_size:
@@ -1181,7 +1181,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                                 #only read the data which is selected by the previous conditons
                                                 column_data[i] = ds[i] 
                                             else:
-                                                column_data[i] = None
+                                                column_data[i] = datatransformer.get_default_value(col[EXECUTOR_DTYPE])
                                             i += 1
                                 #check the conditions
                                 for itemid,col_cond in conds:
