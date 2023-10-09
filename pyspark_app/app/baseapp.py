@@ -1139,7 +1139,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
 
                             #a config to control how to read the data from h5 file to memory
                             read_direct = self.column_read_direct(col)
-                            logger.debug("To check the report conditons, Load the data of the column({}) from h5 file one by one.buffer={}".format(cond[0],buffer_size if buffer_size < dataset_size else 0))
+                            logger.debug("To check the report conditons, Load the data of the column({}) from h5 file.buffer={}".format(conds[0][1][0],buffer_size if buffer_size < dataset_size else 0))
 
                             #find the buffer to hold the data
                             buffer = ExecutorContext.report_data_buffers.get(itemid)
@@ -1172,12 +1172,16 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                             if cond_result[i]:
                                                 #only read the data which is selected by the previous conditons
                                                 column_data[i] = ds[i].decode() 
+                                            else:
+                                                column_data[i] = ""
                                             i += 1
                                     else:
                                         while i < dataset_size:
                                             if cond_result[i]:
                                                 #only read the data which is selected by the previous conditons
                                                 column_data[i] = ds[i] 
+                                            else:
+                                                column_data[i] = None
                                             i += 1
                                 #check the conditions
                                 for itemid,col_cond in conds:
@@ -2006,7 +2010,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     cond[2] = json.loads(cond[2])
                     if isinstance(cond[2],list):
                         for i in range(len(cond[2])):
-                            if col[DRIVER_TRANSFORMER]:
+                            if col[DRIVER_TRANSFORMER] and not col[DRIVER_COLUMNINFO].get("transform4user",False):
                                 #need transformation
                                 if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                     #is enum type
@@ -2016,6 +2020,11 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                         cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
                                     else:
                                         cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+ 
+                                    if datatransformer.is_string_type(col[DRIVER_DTYPE]):
+                                        for i in range(len(cond[2])):
+                                            cond[2][i] = cond[2][i].encode()
+
                             elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                                 #encode the string value
                                 cond[2][i] = (cond[2][i] or "").encode()
@@ -2033,7 +2042,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                             reportsize = None
                             return 
                     else:
-                        if col[DRIVER_TRANSFORMER]:
+                        if col[DRIVER_TRANSFORMER] and not col[DRIVER_COLUMNINFO].get("transform4user",False):
                             #need transformation
                             if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                 #is enum type
@@ -2043,6 +2052,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                     cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
                                 else:
                                     cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+
+                                if datatransformer.is_string_type(col[DRIVER_DTYPE]):
+                                    cond[2] = cond[2]
                         elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                             #encode the string value
                             cond[2]= (cond[2] or "").encode()
