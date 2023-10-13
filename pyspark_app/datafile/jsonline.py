@@ -8,27 +8,27 @@ file_ext = ".jsonl"
 description="Export report data as json line file. each line is a dict object encoded as json object"
 
 def writer(file=None,**kwargs):
-    if "headers" in kwargs:
-        headers = kwargs.pop("headers")
+    if "header" in kwargs:
+        header = kwargs.pop("header")
     else:
-        headers = None
+        header = None
 
     if file:
         #normal file
-        return JSONLineWriter(file,headers,open(file,'w'))
+        return JSONLineWriter(file,header,open(file,'w'))
     else:
         #tempfile
         output = tempfile.NamedTemporaryFile(mode='w',**kwargs)
-        return JSONlineWriter(output.name,headers,output)
+        return JSONlineWriter(output.name,header,output)
 
-def reader(file,headers=None,has_header=False):
-    return JSONLineReader(file,headers)
+def reader(file,header=None,has_header=False):
+    return JSONLineReader(file,header)
 
 class JSONLineReader(object):
-    _headers_row = None
-    def __init__(self,file,headers):
+    _header_row = None
+    def __init__(self,file,header):
         self.file = file
-        self._headers = headers
+        self._header = header
         self.file_input = None
 
     def open(self):
@@ -64,11 +64,11 @@ class JSONLineReader(object):
     def rows(self):
         self.open()
 
-        #read the headers first
-        headers = self.headers
+        #read the header first
+        header = self.header
 
-        if self._headers_row:
-            yield self._headers_row
+        if self._header_row:
+            yield self._header_row
 
         data = self.file_input.readline()
         while data:
@@ -80,17 +80,17 @@ class JSONLineReader(object):
                 if not row:
                     continue
 
-                yield [row.get(col) for col in self._headers]
+                yield [row.get(col) for col in self._header]
             finally:
                 data = self.file_input.readline()
 
     @property
-    def headers(self):
+    def header(self):
         """
-        Return column headers
+        Return column header
         """
-        if self._headers is not None:
-            return self._headers
+        if self._header is not None:
+            return self._header
 
         self.open()
 
@@ -107,15 +107,15 @@ class JSONLineReader(object):
                 data = self.file_input.readline()
                 continue
 
-            self._headers = [k for k in row.keys()]
-            self._headers.sort()
-            self._headers_row = [row.get(col) for col in self.headers]
-            return self._headers
+            self._header = [k for k in row.keys()]
+            self._header.sort()
+            self._header_row = [row.get(col) for col in self.header]
+            return self._header
 
         #empty file
-        self._headers = []
-        self._headers_row = []
-        return self._headers
+        self._header = []
+        self._header_row = []
+        return self._header
 
     def close(self):
         try:
@@ -124,9 +124,9 @@ class JSONLineReader(object):
         except:
             pass
         self.file_input = None
-        if self._headers_row:
-            self._headers_row = None
-            self._headers = None
+        if self._header_row:
+            self._header_row = None
+            self._header = None
 
 
     def __enter__(self):
@@ -137,9 +137,9 @@ class JSONLineReader(object):
         return False if value else True
 
 class JSONLineWriter(object):
-    def __init__(self,file,headers,file_output):
+    def __init__(self,file,header,file_output):
         self.file = file
-        self.headers = headers
+        self.header = header
         self.file_output = file_output
         self.first_row = True
 
@@ -156,13 +156,13 @@ class JSONLineWriter(object):
     
     def _writerrow(self,row,jsondata={}):
         if not isinstance(row,dict):
-            if not self.headers:
-                raise Exception("row is not a dictionary data, please provide the column headers")
-            for k,v in zip(self.headers,row):
+            if not self.header:
+                raise Exception("row is not a dictionary data, please provide the column header")
+            for k,v in zip(self.header,row):
                 jsondata[k] = v
             row = jsondata
-        elif self.headers:
-            for k in self.headers:
+        elif self.header:
+            for k in self.header:
                 jsondata[k] = row.get(k)
             row = jsondata
             

@@ -8,24 +8,24 @@ file_ext = ".csv"
 description="Export report data as csv "
 
 def writer(file=None,**kwargs):
-    if "headers" in kwargs:
-        headers = kwargs.pop("headers")
+    if "header" in kwargs:
+        header = kwargs.pop("header")
     else:
-        headers = None
+        header = None
 
     if file:
         #normal file
-        return CSVWriter(file,open(file,'w'),headers=headers)
+        return CSVWriter(file,open(file,'w'),header=header)
     else:
         #tempfile
         output = tempfile.NamedTemporaryFile(mode='w',**kwargs)
-        return CSVWriter(output.name,output,headers=headers)
+        return CSVWriter(output.name,output,header=header)
 
-def reader(file,has_header=True,headers=None):
+def reader(file,has_header=True,header=None):
     return CSVReader(file,has_header)
 
 class CSVReader(object):
-    _headers = None
+    _header = None
     def __init__(self,file,has_header):
         self.file = file
         self.has_header = has_header
@@ -44,7 +44,7 @@ class CSVReader(object):
         self.open()
         try:
             if self.has_header:
-                self.headers
+                self.header
 
             lines = 0
             for row in self.reader:
@@ -61,32 +61,32 @@ class CSVReader(object):
         self.open()
 
         if self.has_header:
-            self.headers
+            self.header
         for row in self.reader:
             if not row:
                 continue
             yield row
      
     @property
-    def headers(self):
+    def header(self):
         """
-        Return column headers
+        Return column header
         """
         if not self.has_header:
-            raise Exception("File({}) doesn't include column header".format(self.file))
+            return None
 
-        if self._headers is not None:
-            return self._headers
+        if self._header is not None:
+            return self._header
 
         self.open()
 
         for row in self.reader:
             if row:
-                self._headers = row
-                return self._headers
+                self._header = row
+                return self._header
 
-        self._headers = []
-        return self._headers
+        self._header = []
+        return self._header
 
     def close(self):
         try:
@@ -96,7 +96,7 @@ class CSVReader(object):
             pass
         self.file_input = None
         self.reader = None
-        self._headers = None
+        self._header = None
 
     def __enter__(self):
         return self
@@ -106,13 +106,13 @@ class CSVReader(object):
         return False if value else True
 
 class CSVWriter(object):
-    def __init__(self,file,file_output,headers=None):
+    def __init__(self,file,file_output,header=None):
         self.file = file
         self.file_output = file_output
-        self.headers = headers
+        self.header = header
         self.writer = csv.writer(self.file_output)
-        if self.headers:
-            self.writer.writerow(self.headers)
+        if self.header:
+            self.writer.writerow(self.header)
 
     def writerows(self,rows):
         if not self.writer:

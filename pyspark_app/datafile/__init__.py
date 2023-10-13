@@ -16,7 +16,7 @@ initialize()
 def writer(filetype,file=None,**kwargs):
     return filetypes[filetype].writer(file=file,**kwargs)
 
-def reader(filetype,file,headers=None,has_header=True):
+def reader(filetype,file,header=None,has_header=True):
     """
     """
-    return filetypes[filetype].reader(file=file,headers=headers,has_header=has_header)
+    return filetypes[filetype].reader(file=file,header=header,has_header=has_header)

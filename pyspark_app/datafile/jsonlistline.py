@@ -5,27 +5,27 @@ from .. import serializers
 
 format = 'jsonline'
 file_ext = ".jsonl"
-description="Export report data as json line file. The first line is the list of column headers encoded as json string; other lines are list of column values encoded as json string "
+description="Export report data as json line file. The first line is the list of column header encoded as json string; other lines are list of column values encoded as json string "
 
 def writer(file=None,**kwargs):
-    if "headers" in kwargs:
-        headers = kwargs.pop("headers")
+    if "header" in kwargs:
+        header = kwargs.pop("header")
     else:
-        headers = None
+        header = None
 
     if file:
         #normal file
-        return JSONLineWriter(file,headers,open(file,'w'))
+        return JSONLineWriter(file,header,open(file,'w'))
     else:
         #tempfile
         output = tempfile.NamedTemporaryFile(mode='w',**kwargs)
-        return JSONlineWriter(output.name,headers,output)
+        return JSONlineWriter(output.name,header,output)
 
-def reader(file,headers=None,has_header=True):
+def reader(file,header=None,has_header=True):
     return JSONLineReader(file,has_header)
 
 class JSONLineReader(object):
-    _headers = None
+    _header = None
     def __init__(self,file,has_header):
         self.file = file
         self.has_header = has_header
@@ -43,7 +43,7 @@ class JSONLineReader(object):
         lines = 0
         try:
             if self.has_header:
-                self.headers
+                self.header
 
             data = self.file_input.readline()
             while data:
@@ -66,9 +66,9 @@ class JSONLineReader(object):
     def rows(self):
         self.open()
 
-        #read the headers first
+        #read the header first
         if self.has_header:
-            headers = self.headers
+            header = self.header
 
         data = self.file_input.readline()
         while data:
@@ -84,15 +84,15 @@ class JSONLineReader(object):
                 data = self.file_input.readline()
 
     @property
-    def headers(self):
+    def header(self):
         """
-        Return column headers
+        Return column header
         """
         if not self.has_header:
             raise Exception("File({}) doesn't include column header".format(self.file))
 
-        if self._headers is not None:
-            return self._headers
+        if self._header is not None:
+            return self._header
 
         self.open()
 
@@ -109,12 +109,12 @@ class JSONLineReader(object):
                 data = self.file_input.readline()
                 continue
 
-            self._headers = row
-            return self._headers
+            self._header = row
+            return self._header
 
         #empty file
-        self._headers = []
-        return self._headers
+        self._header = []
+        return self._header
 
     def close(self):
         try:
@@ -123,7 +123,7 @@ class JSONLineReader(object):
         except:
             pass
         self.file_input = None
-        self._headers = None
+        self._header = None
 
 
     def __enter__(self):
@@ -134,12 +134,12 @@ class JSONLineReader(object):
         return False if value else True
 
 class JSONLineWriter(object):
-    def __init__(self,file,headers,file_output):
+    def __init__(self,file,header,file_output):
         self.file = file
-        self.headers = headers
+        self.header = header
         self.file_output = file_output
-        if self.headers:
-            self.file_output.write(json.dumps(self.headers,cls=serializers.JSONFormater))
+        if self.header:
+            self.file_output.write(json.dumps(self.header,cls=serializers.JSONFormater))
             self.first_row = False
         else:
             self.first_row = True
@@ -157,16 +157,16 @@ class JSONLineWriter(object):
     
     def _writerrow(self,row,jsondata=[]):
         if isinstance(row,dict):
-            if not self.headers:
-                self.headers = [k for k in row.keys()]
-                self.headers.sort()
+            if not self.header:
+                self.header = [k for k in row.keys()]
+                self.header.sort()
             
             if len(jsondata) == 0:
-                for h in self.headers:
+                for h in self.header:
                     jsondata.append(row.get(h))
             else:
-                for i in range(len(self.headers)):
-                    jsondata[i] = row.get(self.headers[i])
+                for i in range(len(self.header)):
+                    jsondata[i] = row.get(self.header[i])
 
             row = jsondata
             

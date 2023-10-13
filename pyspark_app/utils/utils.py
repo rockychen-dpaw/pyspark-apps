@@ -56,7 +56,7 @@ def get_kwargs(f_func,required_parameters):
     """
     argspec = inspect.getfullargspec(f_func)
     if argspec.varargs or argspec.varkw or argspec.kwonlyargs or ((len(argspec.args) if argspec.args else 0) - required_parameters) != (len(argspec.defaults) if argspec.defaults else 0):
-        raise ValidationError("Function should only have {} required parameters and optional multiple keyword parameters.".format(required_parameters))
+        raise Exception("Function should only have {} required parameters and optional multiple keyword parameters.".format(required_parameters))
 
     return argspec.args[required_parameters:] if argspec.defaults else []
 

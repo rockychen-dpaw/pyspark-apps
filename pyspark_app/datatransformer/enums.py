@@ -112,7 +112,7 @@ SET key='{1}'
 
 
 #domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*(:[0-9]+)?$")
-def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid=None,default_domain=None,context=None,domain_pattern=None):
+def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid=None,default_domain=None,context=None,domain_pattern=None,return_id=True):
     try:
         if not columnid:
             raise Exception("Missing column id")
@@ -148,15 +148,15 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
                         enum_dicts[columnid][row[0]] = row[1]
     
             if key in enum_dicts[columnid]:
-                return enum_dicts[columnid][key]
+                return enum_dicts[columnid][key] if return_id else key
     
         elif key in enum_dicts[columnid]:
-            return enum_dicts[columnid][key]
+            return enum_dicts[columnid][key] if return_id else key
         
         if domain_re and not domain_re.search(key):
             #not a valid domain
             if default_domain in enum_dicts:
-                return enum_dicts[columnid][default_domain]
+                return enum_dicts[columnid][default_domain] if return_id else default_domain
             valid_domain = False
         else:
             valid_domain = True
@@ -172,7 +172,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
                             if "reprocess" not in context:
                                 context["reprocess"] = set()
                             context["reprocess"].add(columnname)
-                            return data[0]
+                            return data[0] if return_id else key
 
                         if f_invalid and f_invalid(key,record):
                             valid_domain = False
@@ -191,7 +191,7 @@ SET key='{1}'
                         cursor.execute(sql)
                         conn.commit()
                         enum_dicts[columnid][default_domain] = 0
-                        return 0
+                        return 0 if return_id else default_domain
                 except:
                     conn.rollback()
                     raise
@@ -214,12 +214,12 @@ SET key='{1}'
                 if "reprocess" not in context:
                     context["reprocess"] = set()
                 context["reprocess"].add(columnname)
-                return sequence
+                return sequence if return_id else key
     except:
         logger.error("Failed to convert domain to enum.columnname={},key={},record={}. {}".format(columnname,key,record,traceback.format_exc()))
         raise
 
-def number2group(value,databaseurl=None,columnid=None):
+def number2group(value,databaseurl=None,columnid=None,return_id=True):
     if not columnid:
         raise Exception("Missing column id")
     if not databaseurl:
@@ -248,7 +248,7 @@ def number2group(value,databaseurl=None,columnid=None):
 
     for k,v,f in enum_dicts[columnid]:
         if f(value):
-            return v
+            return v if return_id else k
     raise Exception("Can't find the range of the value({1}) for column({0})".format(columnid,value))
 
 def _is_group_via_pattern(pattern):
@@ -258,7 +258,7 @@ def _is_group_via_pattern(pattern):
 
     return _func
 
-def str2group(value,databaseurl=None,columnid=None):
+def str2group(value,databaseurl=None,columnid=None,return_id=True):
     if not columnid:
         raise Exception("Missing column id")
     if not databaseurl:
@@ -292,12 +292,12 @@ def str2group(value,databaseurl=None,columnid=None):
     value = value or ""
     for k,v,f in enum_dicts[columnid]:
         if f(value):
-            return v
+            return v if return_id else k
 
     raise Exception("Can't find the group of the value({1}) for column({0})".format(columnid,value))
 
 _city_reader = None
-def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal={"country":"DBCA","location":[115.861,-31.92]},unrecoginized="unknown"):
+def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal={"country":"DBCA","location":[115.861,-31.92]},unrecoginized="unknown",return_id=True):
     global _city_reader
     city = None
     if not _city_reader:
@@ -308,7 +308,7 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
 
     if not ip:
         #no ip address, 
-        return 0
+        return 0 if return_id else unrecoginized
     result = _city_reader.get(ip)
     try:
         if result:
@@ -325,7 +325,7 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
             city = internal["country"].capitalize()
             info = {"location":internal.get("location",[115.861,-31.92])}
     except KeyError as ex:
-        city = "UNKNOWN"
+        city = unrecoginized
         info = {}
     except :
         raise Exception("Failed to get the city from GeoLite2-City.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
@@ -341,10 +341,10 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
                     enum_dicts[columnid][row[0]] = row[1]
     
         if city in enum_dicts[columnid]:
-            return enum_dicts[columnid][city]
+            return enum_dicts[columnid][city] if return_id else city
     
     elif city in enum_dicts[columnid]:
-        return enum_dicts[columnid][city]
+        return enum_dicts[columnid][city] if return_id else city
 
     with database.Database(databaseurl).get_conn() as conn:
         with conn.cursor() as cursor:
@@ -353,7 +353,7 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
                 data = cursor.fetchone()
                 if data:
                     enum_dicts[columnid][city] = data[0]
-                    return data[0]
+                    return data[0] if return_id else city
 
                 #valid domain, add to the enum type
                 try:
@@ -371,11 +371,11 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
                     sequence = cursor.fetchone()[0]
         
                 enum_dicts[columnid][city] = sequence
-                return sequence
+                return sequence if return_id else city
             except:
                 logger.error("Failed to convert ip to enum.columnname={},ip={},city={}. {}".format(columnname,ip,city,traceback.format_exc()))
                 if unrecoginized in enum_dicts[columnid]:
-                    return 0
+                    return 0 if return_id else unrecoginized
                 else:
                     sql = """
             INSERT INTO datascience_datasetenum 
@@ -388,11 +388,11 @@ def ip2city(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnna
                     cursor.execute(sql)
                     conn.commit()
                     enum_dicts[columnid][unrecoginized] = 0
-                    return 0
+                    return 0 if return_id else unrecoginized
 
 
 _country_reader = None
-def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal="DBCA",unrecoginized="unknown"):
+def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None,internal="DBCA",unrecoginized="unknown",return_id=True):
     global _country_reader
     country = None
     if not _country_reader:
@@ -402,13 +402,13 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
         _country_reader = maxminddb.open_database(os.path.join(settings.GEOIP_DATABASE_HOME,'GeoLite2-Country.mmdb'))
   
     if not ip:
-        return 0
+        return 0 if return_id else unrecoginized
     result = _country_reader.get(ip)
     if result:
         try:
             country = (result.get("country") or result.get("registered_country") or result["continent"])["names"]["en"].capitalize().replace("'","\\\\'")
         except KeyError as ex:
-            country = "UNKNOWN"
+            country = unrecoginized
         except :
             raise Exception("Failed to get the country from GeoLite2-Country.mmdb. ip={}, ip data={},{}".format(ip,result,traceback.format_exc()))
     else:
@@ -425,10 +425,10 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                     enum_dicts[columnid][row[0]] = row[1]
     
         if country in enum_dicts[columnid]:
-            return enum_dicts[columnid][country]
+            return enum_dicts[columnid][country] if return_id else country
     
     elif country in enum_dicts[columnid]:
-        return enum_dicts[columnid][country]
+        return enum_dicts[columnid][country] if return_id else country
 
     with database.Database(databaseurl).get_conn() as conn:
         with conn.cursor() as cursor:
@@ -437,7 +437,7 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                 data = cursor.fetchone()
                 if data:
                     enum_dicts[columnid][country] = data[0]
-                    return data[0]
+                    return data[0] if return_id else country
 
                 #valid domain, add to the enum type
                 try:
@@ -455,11 +455,11 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                     sequence = cursor.fetchone()[0]
         
                 enum_dicts[columnid][country] = sequence
-                return sequence
+                return sequence if return_id else country
             except:
                 logger.error("Failed to convert ip to enum.columnname={},ip={},country={}. {}".format(columnname,ip,country,traceback.format_exc()))
                 if unrecoginized in enum_dicts[columnid]:
-                    return 0
+                    return 0 if return_id else unrecoginized
                 else:
                     sql = """
             INSERT INTO datascience_datasetenum 
@@ -472,7 +472,7 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                     cursor.execute(sql)
                     conn.commit()
                     enum_dicts[columnid][unrecoginized] = 0
-                    return 0
+                    return 0 if return_id else unrecoginized
         
 
 

@@ -35,6 +35,12 @@ EXECUTOR_FILTERABLE=6
 EXECUTOR_GROUPABLE=7
 EXECUTOR_REFRESH_REQUESTED=8
 
+COMPUTEDCOLUMN_COLUMNID = 0
+COMPUTEDCOLUMN_COLUMNINDEX = 1
+COMPUTEDCOLUMN_TRANSFORMER = 2
+COMPUTEDCOLUMN_COLUMNINFO = 3
+
+
 class NoneReportType(object):
     ID = None
     NAME = ""
@@ -69,6 +75,10 @@ class ExecutorContext(object):
 
     resource_harvester = None
     allreportcolumns = None
+    has_datafilter = False
+    has_header = False
+    datafile_is_srcfile = True
+    keep_src_datafile = False
     indexbuffs = None
     databuff = None
     buffer_size = None
@@ -94,7 +104,11 @@ class ExecutorContext(object):
             cls.report_cache_dir = None
 
             cls.resource_harvester = None
-            cls.allreportcolumns = None
+            cls.allreportcolumns = False
+            cls.has_datafilter = False
+            cls.has_header = False
+            cls.datafile_is_srcfile = True
+            cls.keep_src_datafile = False
             cls.indexbuffs = None
             cls.databuff = None
             cls.buffer_size = None
@@ -185,7 +199,6 @@ class DatasetConfig(object):
 
         return self._data_interval
      
-
     _f_datafile = None
     def get_datafilename(self,starttime,endtime):
         if self._f_datafile is None:
@@ -196,7 +209,25 @@ class DatasetConfig(object):
 
         return self._f_datafile(starttime,endtime)
 
+    @property
+    def keep_src_datafile(self):
+        try:
+            return self.datasetinfo["download"].get("keep_src_datafile",False)
+        except:
+            return False
 
+    def get_src_datafile(self,cache_folder,datafile):
+        name,ext = os.path.splitext(datafile)
+        if ext:
+            return os.path.join(cache_folder, "{}.src{}".format(name,ext))
+        else:
+            return os.path.join(cache_folder, "{}.src".format(name))
+
+    def get_datafile(self,cache_folder,datafile):
+        return os.path.join(cache_folder, datafile)
+
+    def get_indexfile(self,cache_folder,datafile):
+        return os.path.join(cache_folder,"{}.hdf5".format(datafile))
 
     _cache_timeout = None
     @property
@@ -228,41 +259,98 @@ class DatasetConfig(object):
 
     def get_srcdatafilereader(self,file):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=self.has_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,header=self.src_data_header,has_header=self.has_src_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
-    def get_datafilereader(self,file,has_header=None):
-        if has_header is None:
-            has_header = self.has_header
+    def get_datafilereader(self,file,has_header):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,headers=self.datasetinfo["datafile"].get("headers"),has_header=has_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,header=self.data_header,has_header=has_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
     @property
-    def has_header(self):
+    def has_src_header(self):
         try:
-            return self.datasetinfo["download"]["has_header"]
+            return self.datasetinfo["download"].get("has_header",False)
         except:
             return False
 
     @property
-    def data_headers(self):
+    def has_header(self):
         try:
-            return self.datasetinfo["datafile"].get("headers")
+            return True if (self.data_header and self.datasetinfo["datafile"].get("has_header",False)) else False
+        except:
+            return False
+
+    def get_data_header(self,datasetinfo):
+        try:
+            return datasetinfo["datafile"].get("header")
         except:
             return None
 
-    def set_data_headers(self,headers):
-        self.datasetinfo["datafile"]["headers"] = headers
+    @property
+    def data_header(self):
+        return self.get_data_header(self.datasetinfo)
 
-    @classmethod
-    def get_data_headers(cls,datasetinfo):
-        try:
-            return datasetinfo["datafile"].get("headers")
-        except:
-            return None
+    @data_header.setter
+    def data_header(self,header):
+        self._src_data_header = None
+        self._computed_columns = None
+        self.datasetinfo["datafile"]["header"] = header
+
+    def get_src_data_header(self,datasetinfo):
+        data_header = self.get_data_header(datasetinfo)
+        if not data_header:
+            return []
+
+        if not self.computed_column_map:
+            return data_header
+
+        return [h for h in data_header if (h not in self.computed_column_map or self.computed_column_map[h][1])]
+
+    _src_data_header = None
+    @property
+    def src_data_header(self):
+        if self._src_data_header is None:
+            self._src_data_header = self.get_src_data_header(self.datasetinfo)
+
+        return self._src_data_header
+
+    @src_data_header.setter
+    def src_data_header(self,header):
+        if self.computed_columns:
+            self._src_data_header = list(header)
+            for column,override,column_config in self.computed_columns.items():
+                if override:
+                    #this computed column only overrides the column value
+                    continue
+                #the computed column is a new column
+                header.insert(column_config[0],column)
+        else:
+            self._src_data_header = header
+
+        self.datasetinfo["datafile"]["header"] = header
+
+    _computed_columns = None
+    @property
+    def computed_columns(self):
+        if self._computed_columns is None:
+            if not self.data_header:
+                self._computed_columns = {}
+            elif self.computed_column_map:
+                computed_columns = collections.OrderedDict()
+                for i in range(len(self.data_header)):
+                    column = self.data_header[i]
+                    if column not in self.computed_column_map:
+                        continue
+                    override = True if i == self.computed_column_map[column][COMPUTEDCOLUMN_COLUMNINDEX] else False
+                    computed_columns[column] = (i,override,self.computed_column_map[column])
+                self._computed_columns = computed_columns
+            else:
+                self._computed_columns = {}
+
+        return self._computed_columns
 
     @property
     def databuffer_size(self):
@@ -270,7 +358,6 @@ class DatasetConfig(object):
             return self.datasetinfo["download"].get("download_buffer",10000)
         except :
             return 10000
-
 
     @property
     def indexbuffer_size(self):
@@ -340,6 +427,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
         self.databaseurl = databaseurl
         self.datasetid = datasetid
         self.datasetinfo = datasetinfo
+        self.computed_column_map = {}
         self.dataset_refresh_requested = dataset_refresh_requested
         self.lock_timeout = lock_timeout
          
@@ -446,10 +534,15 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 with database.Database(self.databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
                         #load dataset columns
-                        cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
+                        cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                         previous_columnindex = None
                         columns = None
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
+                            if d[0] != -1 and d[10]:
+                                #computed column
+                                self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
+                                continue
+
                             if previous_columnindex is None or previous_columnindex != d[0]:
                                 #new column index
                                 if columns:
@@ -462,6 +555,9 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 previous_columnindex = d[0]
                                 columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])]]
                                 ExecutorContext.allreportcolumns[d[0]] = columns
+                                if d[5] and (d[5].get("include") or d[5].get("exclude")):
+                                    ExecutorContext.has_datafilter = True
+
                             else:
                                 columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9]))
                                 if d[5]:
@@ -473,6 +569,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 columns[0][0] = [columns[0][0],d[5].get("include")]
                                         else:
                                             columns[0][0] = d[5].get("include")
+                                        ExecutorContext.has_datafilter = True
         
                                     if d[5].get("exclude"):
                                         if columns[0][1]:
@@ -482,32 +579,57 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 columns[0][1] = [columns[0][1],d[5].get("exclude")]
                                         else:
                                             columns[0][1] = d[5].get("exclude")
-            
+                                        ExecutorContext.has_datafilter = True
+
+                self._computed_columns = None
+                if self.computed_columns or ExecutorContext.has_datafilter:
+                    #has computed columns or data flter, data file is different with source file
+                    ExecutorContext.datafile_is_srcfile = False
+
+                    ExecutorContext.has_header = self.has_header
+                    ExecutorContext.keep_src_datafile = self.keep_src_datafile
+                else:
+                    ExecutorContext.datafile_is_srcfile = True
+                    #data file is the same file as source file,using the property 'has_src_header'
+                    ExecutorContext.has_header = self.has_src_header
+                    ExecutorContext.keep_src_datafile = True
 
             cache_folder = os.path.join(ExecutorContext.data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
             utils.mkdir(cache_folder)
     
             #get the cached local data file and data index file
-            data_file = os.path.join(cache_folder,data[2])
-            data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[2]))
+            src_datafile = self.get_src_datafile(cache_folder,data[2])
+            if ExecutorContext.datafile_is_srcfile:
+                datafile = src_datafile
+            else:
+                datafile = self.get_datafile(cache_folder,data[2])
+            dataindexfile = self.get_indexfile(cache_folder,data[2])
     
-            if os.path.exists(data_file) and self.dataset_refresh_requested and utils.file_mtime(data_file) < self.dataset_refresh_requested:
-                #data_file is cached before refersh requested, need to refresh again.
-                logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(data_file,timezone.format(utils.file_mtime(data_file)),timezone.format(self.dataset_refresh_requested)))
-                utils.remove_file(data_file)
+            if ExecutorContext.datafile_is_srcfile:
+                normal_datafile = self.get_datafile(cache_folder,data[2])
+                if os.path.exists(normal_datafile):
+                    #remove the outdated data file
+                    utils.remove_file(normal_datafile)
+            elif os.path.exists(datafile) and self.dataset_refresh_requested and utils.file_mtime(datafile) < self.dataset_refresh_requested:
+                #datafile is cached before refersh requested, need to refresh again.
+                logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(datafile,timezone.format(utils.file_mtime(datafile)),timezone.format(self.dataset_refresh_requested)))
+                utils.remove_file(datafile)
     
-    
-            if not os.path.exists(data_file) and os.path.exists(data_index_file):
-                #if data_file doesn't exist, data_indes_file should not exist too.
-                utils.remove_file(data_index_file)
+            if os.path.exists(dataindexfile):
+                if not os.path.exists(datafile):
+                    #if datafile doesn't exist, data_indes_file should not exist too.
+                    utils.remove_file(dataindexfile)
+                elif self.dataset_refresh_requested and utils.file_mtime(dataindexfile) < self.dataset_refresh_requested:
+                    #dataindexfile is outdated. remove it
+                    utils.remove_file(dataindexfile)
     
             #check data index file
             process_required_columns = set()
-            dataset_size = 0
-            if os.path.exists(data_index_file):
+            dataset_size = -1
+            if os.path.exists(dataindexfile):
                 #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
                 try:
-                    with h5py.File(data_index_file,'r') as index_file:
+                    with h5py.File(dataindexfile,'r') as index_file:
                         for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
                             for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                 if  not column_filterable and not column_groupable and not column_statistical:
@@ -524,327 +646,339 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 except:
                     #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
                     logger.error(traceback.format_exc())
-                    utils.remove_file(data_index_file)
+                    utils.remove_file(dataindexfile)
                     process_required_columns.clear()
     
-            if os.path.exists(data_index_file) and not process_required_columns:
+            if os.path.exists(dataindexfile) and not process_required_columns:
                 #data index file is already downloaded
-                logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
+                logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(datafile,dataindexfile))
                 return [[*data,ExecutorContext.ALREADY_DOWNLOADED]]
-            else:
-                #data index file does not exist, generate it.
-                #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
-                before_get_lock = timezone.localtime()
-                try:
-                    with FileLock(os.path.join(cache_folder,"{}.lock".format(data[2])),self.filelock_timeout,timeout = self.lock_timeout) as lock:
-                        if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
-                            #spend at least 1 second to get the lock, some other process worked on the same file too.
-                            #regenerate the process_required_columns
-                            process_required_columns.clear()
-                            if os.path.exists(data_index_file):
-                                #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
-                                try:
-                                    with h5py.File(data_index_file,'r') as index_file:
-                                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                                if  not column_filterable and not column_groupable and not column_statistical:
-                                                    continue
-                                                try:
-                                                    #check whether the dataset is accessable by getting the size
-                                                    dataset_size = index_file[column_name].shape[0]
-                                                    if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
-                                                        #The column's index was created before the refresh required by the user
-                                                        process_required_columns.add(column_name)
-                                                except KeyError as ex:
-                                                    #this dataset does not exist , regenerate it
-                                                    process_required_columns.add(column_name)
-                                except:
-                                    #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
-                                    utils.remove_file(data_index_file)
-                                    process_required_columns.clear()
-        
-                        if os.path.exists(data_index_file) and not process_required_columns:
-                            #data index file is already downloaded
-                            logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(data_file,data_index_file))
-                            return [[*data,ExecutorContext.ALREADY_DOWNLOADED]]
-        
-                            #generate the index file
-                        #get the line counter of the file
-                        try:
-                            indexbuff_baseindex = 0
-                            indexbuff_index = 0
-    
-                            databuff_index = 0
-                            #prepare the source data file if required.
-                            src_data_file = None
-                            if not os.path.exists(data_file):
-                                #local data file doesn't exist, download the source file if required as src_data_file
-                                if not ExecutorContext.resource_harvester:
-                                    ExecutorContext.resource_harvester = self.harvester
 
-                                if ExecutorContext.resource_harvester.is_local():
-                                    src_data_file = ExecutorContext.resource_harvester.get_abs_path(data[2])
-                                else:
-                                    with tempfile.NamedTemporaryFile(prefix="dataset_{}".format(self.datasetid),delete=False) as f:
-                                        src_data_file = f.name
 
-                                    while True:
-                                        columns_changed,columns = ExecutorContext.resource_harvester.saveas(data[2],src_data_file,columns=self.data_headers,starttime=dataset_time,endtime=dataset_endtime)
-                                        if columns_changed:
-                                            #columns changed, update the datasetinfo
-                                            with database.Database(self.databaseurl).get_conn(True) as conn:
-                                                with conn.cursor() as cursor:
-                                                    try:
-                                                        #first lock the record
-                                                        cursor.execute("select datasetinfo from datascience_dataset where id = {0} for update;".format(
-                                                            self.datasetid
-                                                        ))
-                                                        new_headers = DatasetConfig.get_data_headers(cursor.fetchone()[0])
-                                                        if self.data_headers == new_headers:
-                                                            #headers in database is not changed,update the headers in database
-                                                            self.set_data_headers(columns)
-                                                            cursor.execute("update datascience_dataset set datasetinfo='{1}', modified='{2}' where id = {0};".format(
-                                                                self.datasetid,
-                                                                json.dumps(self.datasetinfo).replace("'","''"),
-                                                                timezone.dbtime()
-                                                            ))
-                                                            break
-                                                        elif columns == new_headers:
-                                                            logger.debug("Columns in db has been changed by other process, but the changed columns in db is equal with the changed columns")
-                                                            self.set_data_headers(columns)
-                                                            break
-                                                        else:
-                                                            logger.debug("Columns has been changed by other process, do it again with the new columns in db")
-                                                            self.set_data_headers(new_headers)
-                                                            continue
-                                                    finally:
-                                                        #commit the change and release the lock
-                                                        conn.commit()
-                                        else:
-                                            break
-    
-                            #generate index file
-                            tmp_index_file = "{}.tmp".format(data_index_file)
-                            if os.path.exists(data_index_file):
-                                #the index file already exist, only part of the columns need to be refreshed.
-                                #rename the index file to tmp_index_file for processing
-                                shutil.copy(data_index_file,tmp_index_file)
-                                logger.debug("The columns({1}) need to be refreshed in index file({0})".format(data_index_file,process_required_columns))
-                            else:
-                                if os.path.exists(tmp_index_file):
-                                    #tmp index file exists, delete it
-                                    utils.remove_file(tmp_index_file)
-                                if src_data_file:
-                                    dataset_size = self.get_srcdatafilereader(src_data_file).records
-                                else:
-                                    dataset_size = self.get_datafilereader(data_file).records
-
-                                logger.debug("Create the the index file({0})".format(data_index_file))
-    
-                            logger.debug("The file({}) has {} records".format((src_data_file or data_file),dataset_size))
-                                
-                            excluded_rows = 0
-                            context={
-                                "dataset_time":dataset_time
-                            }
-
-                            if src_data_file:
-                                #the local cached data file doesnot exist, 
-                                #should generate the local cached data file by excluding the noisy data from original dataset.
-                                tmp_data_file = "{}.tmp".format(data_file)
-                                datafilewriter = self.get_datafilewriter(file=tmp_data_file,headers=self.data_headers if self.has_header else None)
-                                if not ExecutorContext.databuff:
-                                    ExecutorContext.databuffer_size = self.databuffer_size
-                                    ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
-                            else:
-                                #found the cached file, get the data from local cached file
-                                tmp_data_file = None
-                                datafilewriter = None
-    
-                            created = timezone.timestamp()
-                            indexdatasets = {}
-                            if ExecutorContext.indexbuffs is None:
-                                ExecutorContext.indexbuffs = {}
-                            with h5py.File(tmp_index_file,'a') as tmp_h5:
-                                while True:
-                                    indexbuff_baseindex = 0
-                                    indexbuff_index = 0
-                                    databuff_index = 0
-                                    with (self.get_srcdatafilereader(src_data_file) if src_data_file else self.get_datafilereader(data_file))  as datafilereader:
-                                        for item in datafilereader.rows:
-                                            #check the filter first
-                                            if src_data_file:
-                                                #data are retrieved from source, should execute the filter logic
-                                                excluded = False
-                                                for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                                    value = valueat(item,columnindex)
-                                                    excluded = False
-                                                    if  reportcolumns[0] and not reportcolumns[0](value):
-                                                        #excluded
-                                                        excluded = True
-                                                        break
-                                                if excluded:
-                                                    #record are excluded
-                                                    excluded_rows += 1
-                                                    continue
-                                                #data are retrieved from source,append the data to local data file
-                                                ExecutorContext.databuff[databuff_index] = item
-                                                databuff_index += 1
-                                                if databuff_index == ExecutorContext.databuffer_size:
-                                                    #databuff is full, flush to file 
-                                                    datafilewriter.writerows(ExecutorContext.databuff)
-                                                    databuff_index = 0
-                                            
-                                            #generate the dataset for each index column
-                                            for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                                value = valueat(item,columnindex)
-    
-                                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
-                                                    if  not column_filterable and not column_groupable and not column_statistical:
-                                                        #no need to create index 
-                                                        continue
-                                                    if process_required_columns and column_name not in process_required_columns:
-                                                        #this is not the first run, and this column no nedd to process again
-                                                        continue
-    
-                                                    column_size = column_columninfo.get("size",64) if column_columninfo else 64
-                        
-                                                    #create the buffer and hdf5 dataset for column
-                                                    if column_name not in indexdatasets:
-                                                        if column_name in tmp_h5:
-                                                            indexdatasets[column_name] = tmp_h5[column_name]
-                                                        else:
-                                                            indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_size))
-                                                        indexdatasets[column_name].attrs["created"] = created
-
-                                                    if column_name not in ExecutorContext.indexbuffs:
-                                                        ExecutorContext.indexbuffs[column_name] = np.empty((ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
-                        
-                                                    #get the index data for each index column
-                                                    if column_transformer:
-                                                        #data  transformation is required
-                                                        if column_columninfo and column_columninfo.get("parameters"):
-                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
-                                                        else:
-                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
-                                                    else:
-                                                        if datatransformer.is_int_type(column_dtype):
-                                                            try:
-                                                                value = int(value.strip()) if value else 0
-                                                            except:
-                                                                value = 0
-                                                        elif datatransformer.is_float_type(column_dtype):
-                                                            try:
-                                                                value = float(value.strip()) if value else 0
-                                                            except:
-                                                                value = 0
-                                                        else:
-                                                            #remove non printable characters
-                                                            value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
-                                                            #value is too long,cut to the column size
-                                                            if len(value) >= column_size:
-                                                                value = value[0:column_size]
-    
-                                                        ExecutorContext.indexbuffs[column_name][indexbuff_index] = value
-                        
-                                                    if indexbuff_index == ExecutorContext.buffer_size - 1:
-                                                        #buff is full, write to hdf5 file
-                                                        try:
-                                                            indexdatasets[column_name].write_direct(ExecutorContext.indexbuffs[column_name],np.s_[0:ExecutorContext.buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + ExecutorContext.buffer_size])
-                                                        except Exception as ex:
-                                                            logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,ExecutorContext.buffer_size,str(ex)))
-                                                            raise
-            
-                                                        lock.renew()
-                        
-                                            indexbuff_index += 1
-                                            if indexbuff_index == ExecutorContext.buffer_size:
-                                                #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
-                                                indexbuff_index = 0
-                                                indexbuff_baseindex += ExecutorContext.buffer_size
-                                                logger.debug("indexbuff_baseindex = {}".format(indexbuff_baseindex))
-        
-                                    if src_data_file:
-                                        if databuff_index > 0:
-                                            #still have some data in data buff, flush it to file
-                                            datafilewriter.writerows(ExecutorContext.databuff[:databuff_index])
-    
-                                        datafilewriter.close()
-                                        #rename the tmp data file to data file if required
-                                        os.rename(tmp_data_file,data_file)
-    
-                                        if not ExecutorContext.resource_harvester.is_local():
-                                            #src data file is a temp file , delete it
-                                            utils.remove_file(src_data_file)
-                                            pass
-                                        #set src_data_file to None, next run will read the data from data_file directly
-                                        src_data_file = None
-                                        logger.info("file({0}) which contains {1} rows, {2} rows were processed, {3} rows were ignored ".format(data_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
-    
-                                    
-                                    logger.debug("indexbuff_baseindex = {},indexbuff_index = {}, excluded_rows = {}".format(indexbuff_baseindex,indexbuff_index,excluded_rows))
-                                    #still have data in buff, write them to hdf5 file
-                                    if indexbuff_index > 0:
-                                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                                if  not column_filterable and not column_groupable and not column_statistical:
-                                                    continue
-                        
-                                                if process_required_columns and column_name not in process_required_columns:
-                                                    #this is not the first run, and this column no nedd to process again
-                                                    continue
-                        
-                                                indexdatasets[column_name].write_direct(ExecutorContext.indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
-    
-                                    if context.get("reprocess"):
-                                        #some columns need to be reprocess again
-                                        process_required_columns.clear()
-                                        for col in context.get("reprocess"):
-                                            process_required_columns.add(col)
-                                        context.get("reprocess").clear()
-                                        logger.debug("The columns({1}) are required to reprocess for dataset({0})".format(self.datasetid,process_required_columns))
-                                    else:
-                                        #the data file has been processed. 
-                                        if indexbuff_baseindex + indexbuff_index + excluded_rows != dataset_size:
-                                            raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(data_file,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,data_index_file))
-                                        else:
-                                            logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed, {4} rows were ignored ".format(data_file,data_index_file,dataset_size,indexbuff_baseindex + indexbuff_index,excluded_rows))
-                                        break
-                        
-                        finally:
-                            if src_data_file:
-                                try:
-                                    datafilewriter.close()
-                                except:
-                                    pass
-    
-                        #rename the tmp file to index file
-                        if excluded_rows:
-                            #some rows are excluded from access log, the size of the index dataset should be shrinked to (dataset_baseindex + buff_index)
-                            dataset_size = indexbuff_baseindex + indexbuff_index
-                            tmp2_index_file = "{}.tmp2".format(data_index_file)
-                            with h5py.File(tmp2_index_file,'w') as tmp2_h5:
-                                with h5py.File(tmp_index_file,'r') as tmp_h5:
+            #data index file does not exist, or some columns are outdated
+            #Obtain the file lock before generating the index file to prevend mulitiple process from generating the index file for the same access log file
+            before_get_lock = timezone.localtime()
+            try:
+                with FileLock(os.path.join(cache_folder,"{}.lock".format(data[2])),self.filelock_timeout,timeout = self.lock_timeout) as lock:
+                    if (timezone.localtime() - before_get_lock).total_seconds() >= 0.5:
+                        #spend at least 1 second to get the lock, some other process worked on the same file too.
+                        #regenerate the process_required_columns
+                        process_required_columns.clear()
+                        if os.path.exists(dataindexfile):
+                            #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
+                            try:
+                                with h5py.File(dataindexfile,'r') as index_file:
                                     for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
                                         for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                             if  not column_filterable and not column_groupable and not column_statistical:
                                                 continue
                                             try:
-                                                tmp2_h5.create_dataset(column_name,dtype=tmp_h5[column_name].dtype,data=tmp_h5[column_name][0:dataset_size])
-                                                tmp2_h5[column_name].attrs["created"] = created
-                                            except Exception as ex:
-                                                logger.error("Failed to resize the dataset.file={} column={}, before size={}, after size={}. {}".format(data_index_file,column_name,tmp_h5[column_name].shape[0],dataset_size,str(ex)))
-                                                raise
+                                                #check whether the dataset is accessable by getting the size
+                                                dataset_size = index_file[column_name].shape[0]
+                                                if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                                    #The column's index was created before the refresh required by the user
+                                                    process_required_columns.add(column_name)
+                                            except KeyError as ex:
+                                                #this dataset does not exist , regenerate it
+                                                process_required_columns.add(column_name)
+                            except:
+                                #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
+                                utils.remove_file(dataindexfile)
+                                process_required_columns.clear()
     
-                            os.rename(tmp2_index_file,data_index_file)
+                    if os.path.exists(dataindexfile) and not process_required_columns:
+                        #data index file is already downloaded
+                        logger.debug("The index file({1}) is already generated and up-to-date for data file({0})".format(datafile,dataindexfile))
+                        return [[*data,ExecutorContext.ALREADY_DOWNLOADED]]
     
-                            utils.remove_file(tmp_index_file)
+                    #generate the index file
+                    #prepare the data file if does not exist
+                    if not os.path.exists(datafile):
+                        #data file does not exist, load the src data file if it does not exist too.
+                        #local data file doesn't exist, download the source file if required as src_datafile
+                        if not ExecutorContext.resource_harvester:
+                            ExecutorContext.resource_harvester = self.harvester
+                        
+                        #download the source data file if does not exist
+                        if not os.path.exists(src_datafile):
+                            while True:
+                                columns_changed,columns = ExecutorContext.resource_harvester.saveas(data[2],src_datafile,columns=self.src_data_header,starttime=dataset_time,endtime=dataset_endtime)
+                                if columns_changed:
+                                    #columns changed, update the datasetinfo
+                                    with database.Database(self.databaseurl).get_conn(True) as conn:
+                                        with conn.cursor() as cursor:
+                                            try:
+                                                #first lock the record
+                                                cursor.execute("select datasetinfo from datascience_dataset where id = {0} for update;".format(
+                                                    self.datasetid
+                                                ))
+                                                new_datasetinfo = cursor.fetchone()[0]
+                                                new_src_header = DatasetConfig.get_src_data_header(new_datasetinfo)
+                                                if self.src_data_header == new_src_header:
+                                                    #header in database is not changed,update the header in database
+                                                    self.src_data_header = columns
+                                                    cursor.execute("update datascience_dataset set datasetinfo='{1}', modified='{2}' where id = {0};".format(
+                                                        self.datasetid,
+                                                        json.dumps(self.datasetinfo).replace("'","''"),
+                                                        timezone.dbtime()
+                                                    ))
+                                                    break
+                                                elif columns == new_src_header:
+                                                    logger.debug("Columns in db has been changed by other process, but the changed columns in db is equal with the changed columns")
+                                                    self.src_data_header = columns
+                                                    break
+                                                else:
+                                                    logger.debug("Columns has been changed by other process, do it again with the new columns in db")
+                                                    self.data_header = DatasetConfig.get_data_header(new_datasetinfo)
+                                                    continue
+                                            finally:
+                                                #commit the change and release the lock
+                                                conn.commit()
+                                else:
+                                    break
+
+                        if ExecutorContext.datafile_is_srcfile:
+                            dataset_size = self.get_srcdatafilereader(src_datafile).records
+                            logger.info("The data file({0}) is the same file as the source data file.rows = {1}".format(
+                                datafile,
+                                dataset_size
+                            ))
                         else:
-                            os.rename(tmp_index_file,data_index_file)
-                    return [[*data,ExecutorContext.DOWNLOADED]]
-                except AlreadyLocked as ex:
-                    logger.debug("The index file({1}) is downloading by other executor({0}).{2}".format(data_file,data_index_file,ex))
-                    return [[*data,ExecutorContext.DOWNLOADING_BY_OTHERS]]
+                            #generate the data file from src file
+                            tmp_datafile = "{}.tmp".format(datafile)
+                            logger.debug("=========================header={}".format(self.data_header if ExecutorContext.has_header else None))
+                            datafilewriter = self.get_datafilewriter(file=tmp_datafile,header=self.data_header if ExecutorContext.has_header else None)
+                            if not ExecutorContext.databuff:
+                                ExecutorContext.databuffer_size = self.databuffer_size
+                                ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
+
+                            databuff_index = 0
+                            excluded_rows = 0
+                            dataset_size = 0
+                            context={
+                                "dataset_time":dataset_time
+                            }
+                            try:
+                                with self.get_srcdatafilereader(src_datafile) as datafilereader:
+                                    for item in datafilereader.rows:
+                                        #fill the computed row
+                                        if self.computed_columns:
+                                            #expand the row first
+                                            for col,col_config in self.computed_columns.items():
+                                                if col_config[1]:
+                                                    continue
+                                                item.insert(col_config[0],None)
+
+                                            #fill the computed column value
+                                            for col,col_config in self.computed_columns.items():
+                                                if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                    val = datatransformer.transform(
+                                                        col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
+                                                        valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                        databaseurl=self.databaseurl,
+                                                        columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                        context=context,
+                                                        record=item,
+                                                        columnname=self.data_header[col_config[0]],
+                                                        **col_config[2][COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
+                                                    )
+                                                else:
+                                                    val = datatransformer.transform(
+                                                        col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
+                                                        valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                        databaseurl=self.databaseurl,
+                                                        columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                        context=context,
+                                                        record=item,
+                                                        columnname=self.data_header[col_config[0]]
+                                                    )
+                                                item[col_config[0]] = val
+
+                                        #check the filter 
+                                        excluded = False
+                                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                            val = valueat(item,columnindex)
+                                            excluded = False
+                                            if  reportcolumns[0] and not reportcolumns[0](val):
+                                                #excluded
+                                                excluded = True
+                                                break
+                                        if excluded:
+                                            #record are excluded
+                                            excluded_rows += 1
+                                            continue
+
+                                        #data are retrieved from source,append the data to local data file
+                                        ExecutorContext.databuff[databuff_index] = item
+                                        dataset_size += 1
+                                        databuff_index += 1
+                                        if databuff_index == ExecutorContext.databuffer_size:
+                                            #databuff is full, flush to file 
+                                            datafilewriter.writerows(ExecutorContext.databuff)
+                                            databuff_index = 0
+
+                                    if databuff_index > 0:
+                                        #still have some data in data buff, flush it to file
+                                        datafilewriter.writerows(ExecutorContext.databuff[:databuff_index])
+
+                                    datafilewriter.close()
+                                    datafilewriter = None
+                                    os.rename(tmp_datafile,datafile)
+                                    utils.set_file_mtime(datafile)
+                                    tmp_datafile = None
+
+                                    logger.info("The data file({0}) is generated from source data file '{1}'.rows = {2}, excluded rows = {3}".format(
+                                        datafile,
+                                        src_datafile,
+                                        dataset_size,
+                                        excluded_rows
+                                    ))
+
+                                #remove source data file if required
+                                if not ExecutorContext.keep_src_datafile:
+                                    utils.remove_file(src_datafile)
+                            finally:
+                                if datafilewriter:
+                                    datafilewriter.close()
+                                if tmp_datafile:
+                                    utils.remove_file(tmp_datafile)
+
+                    #generate index file
+                    tmp_index_file = "{}.tmp".format(dataindexfile)
+                    if os.path.exists(dataindexfile):
+                        #the index file already exist, only part of the columns need to be refreshed.
+                        #rename the index file to tmp_index_file for processing
+                        shutil.copy(dataindexfile,tmp_index_file)
+                        logger.debug("The columns({1}) need to be refreshed in index file({0}),dataset size={2}".format(
+                            dataindexfile,
+                            process_required_columns,
+                            dataset_size
+                        ))
+                    else:
+                        if os.path.exists(tmp_index_file):
+                            #tmp index file exists, delete it
+                            utils.remove_file(tmp_index_file)
+                        dataset_size = self.get_datafilereader(datafile,has_header=ExecutorContext.has_header).records
+                        logger.debug("Try to create the index file '{0}', dataset size = {1}".format(dataindexfile,dataset_size))
+
+                    indexbuff_baseindex = 0
+                    indexbuff_index = 0
+                    context={
+                        "dataset_time":dataset_time
+                    }
+                    created = timezone.timestamp()
+                    indexdatasets = {}
+                    if ExecutorContext.indexbuffs is None:
+                        ExecutorContext.indexbuffs = {}
+                    with h5py.File(tmp_index_file,'a') as tmp_h5:
+                        while True:
+                            indexbuff_baseindex = 0
+                            indexbuff_index = 0
+                            with self.get_datafilereader(datafile,has_header=ExecutorContext.has_header)  as datafilereader:
+                                for item in datafilereader.rows:
+                                    #generate the dataset for each index column
+                                    for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                        value = valueat(item,columnindex)
+
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
+                                            if  not column_filterable and not column_groupable and not column_statistical:
+                                                #no need to create index 
+                                                continue
+                                            if process_required_columns and column_name not in process_required_columns:
+                                                #this is not the first run, and this column no nedd to process again
+                                                continue
+
+                                            column_size = column_columninfo.get("size",64) if column_columninfo else 64
+                
+                                            #create the buffer and hdf5 dataset for column
+                                            if column_name not in indexdatasets:
+                                                if column_name in tmp_h5:
+                                                    indexdatasets[column_name] = tmp_h5[column_name]
+                                                else:
+                                                    indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_size))
+                                                indexdatasets[column_name].attrs["created"] = created
+
+                                            if column_name not in ExecutorContext.indexbuffs:
+                                                ExecutorContext.indexbuffs[column_name] = np.empty((ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
+                
+                                            #get the index data for each index column
+                                            if column_transformer:
+                                                #data  transformation is required
+                                                if column_columninfo and column_columninfo.get("parameters"):
+                                                    ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
+                                                else:
+                                                    ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
+                                            else:
+                                                if datatransformer.is_int_type(column_dtype):
+                                                    try:
+                                                        value = int(value.strip()) if value else 0
+                                                    except:
+                                                        value = 0
+                                                elif datatransformer.is_float_type(column_dtype):
+                                                    try:
+                                                        value = float(value.strip()) if value else 0
+                                                    except:
+                                                        value = 0
+                                                else:
+                                                    #remove non printable characters
+                                                    value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                    #value is too long,cut to the column size
+                                                    if len(value) >= column_size:
+                                                        value = value[0:column_size]
+
+                                                ExecutorContext.indexbuffs[column_name][indexbuff_index] = value
+                
+                                            if indexbuff_index == ExecutorContext.buffer_size - 1:
+                                                #buff is full, write to hdf5 file
+                                                try:
+                                                    indexdatasets[column_name].write_direct(ExecutorContext.indexbuffs[column_name],np.s_[0:ExecutorContext.buffer_size],np.s_[indexbuff_baseindex:indexbuff_baseindex + ExecutorContext.buffer_size])
+                                                except Exception as ex:
+                                                    logger.debug("Failed to write {2} records to dataset({1}) which are save in hdf5 file({0}).{3}".format(tmp_index_file,column_name,ExecutorContext.buffer_size,str(ex)))
+                                                    raise
+    
+                                                lock.renew()
+                
+                                    indexbuff_index += 1
+                                    if indexbuff_index == ExecutorContext.buffer_size:
+                                        #buff is full, data is already saved to hdf5 file, set indexbuff_index and indexbuff_baseindex
+                                        indexbuff_index = 0
+                                        indexbuff_baseindex += ExecutorContext.buffer_size
+
+                            #still have data in buff, write them to hdf5 file
+                            if indexbuff_index > 0:
+                                for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                        if  not column_filterable and not column_groupable and not column_statistical:
+                                            continue
+                
+                                        if process_required_columns and column_name not in process_required_columns:
+                                            #this is not the first run, and this column no nedd to process again
+                                            continue
+                
+                                        indexdatasets[column_name].write_direct(ExecutorContext.indexbuffs[column_name],np.s_[0:indexbuff_index],np.s_[indexbuff_baseindex:indexbuff_baseindex + indexbuff_index])
+
+                            if context.get("reprocess"):
+                                #some columns need to be reprocess again
+                                process_required_columns.clear()
+                                for col in context.get("reprocess"):
+                                    process_required_columns.add(col)
+                                context.get("reprocess").clear()
+                                logger.debug("The columns({1}) are required to reprocess for dataset({0})".format(self.datasetid,process_required_columns))
+                            else:
+                                #the data file has been processed. 
+                                if indexbuff_baseindex + indexbuff_index  != dataset_size:
+                                    raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(datafile,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,dataindexfile))
+                                else:
+                                    logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed ".format(datafile,dataindexfile,dataset_size,indexbuff_baseindex + indexbuff_index))
+                                break
+
+                    #rename the tmp file to index file
+                    os.rename(tmp_index_file,dataindexfile)
+                    utils.set_file_mtime(dataindexfile)
+                return [[*data,ExecutorContext.DOWNLOADED]]
+            except AlreadyLocked as ex:
+                logger.debug("The index file({1}) is downloading by other executor({0}).{2}".format(datafile,dataindexfile,ex))
+                return [[*data,ExecutorContext.DOWNLOADING_BY_OTHERS]]
         except harvester.exceptions.ResourceNotFound as ex:
             if self.ignore_missing_datafile:
                 return [[*data,ExecutorContext.RESOURCE_NOT_FOUND]]
@@ -866,29 +1000,22 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
         self.report_group_by = report_group_by
         self.resultset = resultset
         self.report_type = report_type
+        self.computed_column_map = {}
          
-    def report_details(self,data_file,indexes,include_header=False):
+    def report_details(self,datareader,indexes):
         if indexes == "__all__":
-            with self.get_datafilereader(data_file) as datareader:
-                if self.has_header and include_header:
-                    yield datareader.headers
-    
-                for row in datareader.rows:
-                    yield row
+            for row in datareader.rows:
+                yield row
         else:
             index_index = 0
             row_index = 0
-            with self.get_datafilereader(data_file) as datareader:
-                if self.has_header and include_header:
-                    yield datareader.headers
-    
-                for row in datareader.rows:
-                    if row_index == indexes[index_index]:
-                        yield row
-                        index_index += 1
-                        if index_index >= len(indexes):
-                            break
-                    row_index += 1
+            for row in datareader.rows:
+                if row_index == indexes[index_index]:
+                    yield row
+                    index_index += 1
+                    if index_index >= len(indexes):
+                        break
+                row_index += 1
 
     def run(self,data):
         """
@@ -917,9 +1044,32 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                     ExecutorContext.column_map = {}
                     with database.Database(self.databaseurl).get_conn(True) as conn:
                         with conn.cursor() as cursor:
-                            cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
+                            cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
-                                ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])
+                                if d[10]:
+                                    self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
+                                else:
+                                    ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])
+
+                for column_config in ExecutorContext.column_map.values():
+                    if column_config[EXECUTOR_COLUMNINFO].get("include") or column_config[EXECUTOR_COLUMNINFO].get("exclude"):
+                        ExecutorContext.has_datafilter = True
+                        break
+
+                self._computed_columns = None
+
+                if self.computed_columns or ExecutorContext.has_datafilter:
+                    #has computed columns or data flter, data file is different with source file
+                    ExecutorContext.datafile_is_srcfile = False
+
+                    ExecutorContext.has_header = self.has_header
+                    ExecutorContext.keep_src_datafile = self.keep_src_datafile
+                else:
+                    ExecutorContext.datafile_is_srcfile = True
+                    #data file is the same file as source file,using the property 'has_src_header'
+                    ExecutorContext.has_header = self.has_src_header
+                    ExecutorContext.keep_src_datafile = True
+
 
     
                 #find the  share data buffer used for filtering ,group by and statistics
@@ -1092,14 +1242,17 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
         
             cache_folder = os.path.join(ExecutorContext.data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
             #get the cached local data file and data index file
-            data_file = os.path.join(cache_folder,data[2])
-            data_index_file = os.path.join(cache_folder,"{}.hdf5".format(data[2]))
+            if ExecutorContext.datafile_is_srcfile:
+                datafile = self.get_src_datafile(cache_folder,data[2])
+            else:
+                datafile = self.get_datafile(cache_folder,data[2])
+            dataindexfile = self.get_indexfile(cache_folder,data[2])
     
             #the varialbe for the filter result.
             cond_result = None
             column_data = None
     
-            with h5py.File(data_index_file,'r') as index_h5:
+            with h5py.File(dataindexfile,'r') as index_h5:
                 #filter the dataset
                 if not index_h5.values():
                     dataset_size = 0
@@ -1253,31 +1406,36 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                     #return the detail logs
                     if filtered_rows == 0:
                         logger.debug("{}: No data found.file={}, report condition = {}".format(utils.get_processid(),data[2],self.report_conditions))
-                        return [(data[0],data[1],data[2],0,len(self.data_headers) if self.data_headers else 0,None)]
+                        return [(data[0],data[1],data[2],0,len(self.data_header) if self.data_header else 0,None)]
                     else:
                         reportfile_folder = os.path.join(ExecutorContext.report_cache_dir,"tmp")
                         utils.mkdir(reportfile_folder)
                         reportfile = os.path.join(reportfile_folder,"{0}-{2}-{3}{1}".format(*os.path.splitext(data[2]),self.reportid,data[0]))
                         logger.debug("{}: return result in file. file={}, report condition = {}".format(utils.get_processid(),data[2],self.report_conditions))
-                        #return a result file without headers
-                        if filtered_rows == dataset_size:
-                            #all logs are returned
-                            #unlikely to happen.
-                            if self.has_header:
-                                #remove the header for result report file
-                                with self.get_datafilewriter(file=reportfile) as reportwriter:
-                                    reportwriter.writerows(self.report_details(data_file,"__all__",include_header=False))
-                            else:
-                                shutil.copyfile(data_file,reportfile)
+                        #return a result file without header
+                        with self.get_datafilewriter(file=reportfile) as reportwriter:
+                            with self.get_datafilereader(datafile,has_header=ExecutorContext.has_header) as datareader:
+                                if ExecutorContext.has_header:
+                                    header = datareader.header
+                                else:
+                                    header = self.data_header
+                                
+                                if filtered_rows == dataset_size:
+                                    #all data are returned
+                                    #but data file contains header, return a file without header
+                                    if ExecutorContext.has_header:
+                                        reportwriter.writerows(self.report_details(datareader,"__all__"))
+                                        return [(data[0],data[1],data[2],dataset_size,len(header),reportfile)]
+                                else:
+                                    #some datas are choose, return a file containing chosen data without header
+                                    report_size = np.count_nonzero(cond_result)
+                                    indexes = np.flatnonzero(cond_result)
+                                    reportwriter.writerows(self.report_details(datareader,indexes))
+                                    return [(data[0],data[1],data[2],report_size,len(header),reportfile)]
 
-                            return [(data[0],data[1],data[2],dataset_size,len(self.data_headers) if self.data_headers else 0,reportfile)]
-                        else:
-                            report_size = np.count_nonzero(cond_result)
-                            indexes = np.flatnonzero(cond_result)
-                            with self.get_datafilewriter(file=reportfile) as reportwriter:
-                                reportwriter.writerows(self.report_details(data_file,indexes,include_header=False))
-                            return [(data[0],data[1],data[2],report_size,len(self.data_headers) if self.data_headers else 0,reportfile)]
-    
+                        #all data are returned, and data file has no header, copy the data file to reportfile
+                        shutil.copyfile(datafile,reportfile)
+                        return [(data[0],data[1],data[2],dataset_size,len(header),reportfile)]
                 elif self.report_group_by :
                     #'group by' enabled
                     #create pandas dataframe
@@ -1621,9 +1779,9 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
             raise Exception("Dataset({}) doesn't exist.".format(self.datasetid))
         self.datasetname,self.datasetinfo,self.dataset_refresh_requested,self.dataset_modified = dataset
 
-        cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} ".format(self.datasetid))
+        cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
         for row in cursor.fetchall():
-            self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
+             self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
     
     def post_init(self):
         #validate the datasetinfo
@@ -2219,12 +2377,12 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     elif max_columns > r[4]:
                         has_same_columns = False
 
-                if max_columns and max_columns != len(self.data_headers):
+                if max_columns and max_columns != len(self.data_header):
                     #reload dataset info
                     self.load_dataset()
 
-                if max_columns and (not self.data_headers or len(self.data_headers) < max_columns):
-                    raise Exception("Only found {1} columns for dataset({0}), but expect {2} columns".format(self.datasetname,len(self.data_headers),max_columns))
+                if max_columns and (not self.data_header or len(self.data_header) < max_columns):
+                    raise Exception("Only found {1} columns for dataset({0}), but expect {2} columns".format(self.datasetname,len(self.data_header),max_columns))
 
                 if max_columns:
                     report_header_file = os.path.join(report_cache_dir,"detail_report_header_{}.csv".format(max_columns))
@@ -2233,7 +2391,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         logger.debug("Create report header file '{}'".format(report_header_file))
                         with open(report_header_file,'w') as f:
                             writer = csv.writer(f)
-                            writer.writerow(self.data_headers[:max_columns])
+                            writer.writerow(self.data_header[:max_columns])
                         utils.set_file_mtime(report_header_file)
                 else:
                     report_header_file = None
@@ -2272,7 +2430,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                             rowdata[i] = row[i]
                                         writer.writerow(rowdata)
                             #overwrite the report file with new tmp file
-                            shutil.move(new_report_file,r[5])
+                            os.rename(new_report_file,r[5])
 
                     #write the data header as report header
                     files = [r[5] for r in result]
