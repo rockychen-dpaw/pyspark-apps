@@ -638,24 +638,31 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
                 try:
                     with h5py.File(dataindexfile,'r') as index_file:
-                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                if  not column_filterable and not column_groupable and not column_statistical:
-                                    continue
-                                try:
-                                    #check whether the dataset is accessable by getting the size
-                                    dataset_size = index_file[column_name].shape[0]
-                                    if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
-                                        #The column's index was created before the refresh required by the user
+                        if any(index._file.keys()):
+                            for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
+                                    if  not column_filterable and not column_groupable and not column_statistical:
+                                        continue
+                                    try:
+                                        #check whether the dataset is accessable by getting the size
+                                        dataset_size = index_file[column_name].shape[0]
+                                        if column_refresh_requested and (not index_file[column_name].attrs['created'] or timezone.timestamp(column_refresh_requested) > index_file[column_name].attrs['created']):
+                                            #The column's index was created before the refresh required by the user
+                                            process_required_columns.add(column_name)
+                                    except KeyError as ex:
+                                        #this dataset does not exist , regenerate it
                                         process_required_columns.add(column_name)
-                                except KeyError as ex:
-                                    #this dataset does not exist , regenerate it
-                                    process_required_columns.add(column_name)
                 except:
                     #other unexpected exception occur, the index file is corrupted. regenerate the whole index file
                     logger.error(traceback.format_exc())
                     utils.remove_file(dataindexfile)
                     process_required_columns.clear()
+
+            if dataset_size == -1 and os.path.exists(datafile):
+                dataset_size = self.get_datafilereader(datafile,has_header=ExecutorContext.has_header).records
+                if dataset_size > 0 and os.path.exists(dataindexfile):
+                    #dataset has data, but data index file is empty,remove it and regenerate
+                    utils.remove_file(dataindexfile)
     
             if os.path.exists(dataindexfile) and not process_required_columns:
                 #data index file is already downloaded
@@ -875,7 +882,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         if os.path.exists(tmp_index_file):
                             #tmp index file exists, delete it
                             utils.remove_file(tmp_index_file)
-                        dataset_size = self.get_datafilereader(datafile,has_header=ExecutorContext.has_header).records
+                        if dataset_size == -1:
+                            dataset_size = self.get_datafilereader(datafile,has_header=ExecutorContext.has_header).records
                         logger.debug("Try to create the index file '{0}', dataset size = {1}".format(dataindexfile,dataset_size))
 
                     indexbuff_baseindex = 0
@@ -1276,11 +1284,12 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
     
             with h5py.File(dataindexfile,'r') as index_h5:
                 #filter the dataset
-                if not index_h5.values():
+                if not any(index_h5.keys()):
                     dataset_size = 0
-                for ds in index_h5.values():
-                    dataset_size = ds.shape[0]
-                    break
+                else:
+                    for ds in index_h5.values():
+                        dataset_size = ds.shape[0]
+                        break
 
                 if self.report_conditions and dataset_size:
                     #apply the conditions, try to share the np array among conditions to save memory
