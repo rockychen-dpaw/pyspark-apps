@@ -540,6 +540,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
                             if d[0] != -1 and d[10]:
                                 #computed column
+                                if d[5].get("parameters"):
+                                    d[5]["parameters"]["return_id"] = False
+                                else:
+                                    d[5]["parameters"] = {"return_id": False}
                                 self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
                                 continue
 
@@ -1056,6 +1060,11 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
                                 if d[10]:
+                                    if d[5].get("parameters"):
+                                        d[5]["parameters"]["return_id"] = False
+                                    else:
+                                        d[5]["parameters"] = {"return_id": False}
+
                                     self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
                                 else:
                                     ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])
