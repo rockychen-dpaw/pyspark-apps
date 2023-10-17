@@ -984,7 +984,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                             else:
                                 #the data file has been processed. 
                                 if indexbuff_baseindex + indexbuff_index  != dataset_size:
-                                    raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(datafile,(dataset_size - excluded_rows),indexbuff_baseindex + indexbuff_index,dataindexfile))
+                                    raise Exception("The file({0}) has {1} records, but only {2} are written to hdf5 file({3})".format(datafile,dataset_size,indexbuff_baseindex + indexbuff_index,dataindexfile))
                                 else:
                                     logger.info("The index file {1} was generated for file({0}) which contains {2} rows, {3} rows were processed ".format(datafile,dataindexfile,dataset_size,indexbuff_baseindex + indexbuff_index))
                                 break
