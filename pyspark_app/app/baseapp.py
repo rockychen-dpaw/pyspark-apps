@@ -638,7 +638,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 #the data index file exist, check whether the indexes are created for all columns.if not regenerate it
                 try:
                     with h5py.File(dataindexfile,'r') as index_file:
-                        if any(index._file.keys()):
+                        if any(index_file.keys()):
                             for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
                                 for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
                                     if  not column_filterable and not column_groupable and not column_statistical:
