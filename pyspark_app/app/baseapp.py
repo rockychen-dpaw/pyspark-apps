@@ -746,102 +746,111 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         else:
                             #generate the data file from src file
                             tmp_datafile = "{}.tmp".format(datafile)
-                            logger.debug("=========================header={}".format(self.data_header if ExecutorContext.has_header else None))
-                            datafilewriter = self.get_datafilewriter(file=tmp_datafile,header=self.data_header if ExecutorContext.has_header else None)
-                            if not ExecutorContext.databuff:
-                                ExecutorContext.databuffer_size = self.databuffer_size
-                                ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
-
-                            databuff_index = 0
-                            excluded_rows = 0
-                            dataset_size = 0
                             context={
                                 "dataset_time":dataset_time
                             }
-                            try:
-                                with self.get_srcdatafilereader(src_datafile) as datafilereader:
-                                    for item in datafilereader.rows:
-                                        #fill the computed row
-                                        if self.computed_columns:
-                                            #expand the row first
-                                            for col,col_config in self.computed_columns.items():
-                                                if col_config[1]:
-                                                    continue
-                                                item.insert(col_config[0],None)
-
-                                            #fill the computed column value
-                                            for col,col_config in self.computed_columns.items():
-                                                if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
-                                                    val = datatransformer.transform(
-                                                        col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
-                                                        valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
-                                                        databaseurl=self.databaseurl,
-                                                        columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
-                                                        context=context,
-                                                        record=item,
-                                                        columnname=self.data_header[col_config[0]],
-                                                        **col_config[2][COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
-                                                    )
-                                                else:
-                                                    val = datatransformer.transform(
-                                                        col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
-                                                        valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
-                                                        databaseurl=self.databaseurl,
-                                                        columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
-                                                        context=context,
-                                                        record=item,
-                                                        columnname=self.data_header[col_config[0]]
-                                                    )
-                                                item[col_config[0]] = val
-
-                                        #check the filter 
-                                        excluded = False
-                                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                            val = valueat(item,columnindex)
+                            while True:
+                                datafilewriter = self.get_datafilewriter(file=tmp_datafile,header=self.data_header if ExecutorContext.has_header else None)
+                                if not ExecutorContext.databuff:
+                                    ExecutorContext.databuffer_size = self.databuffer_size
+                                    ExecutorContext.databuff = [None] * ExecutorContext.databuffer_size
+    
+                                databuff_index = 0
+                                excluded_rows = 0
+                                dataset_size = 0
+                                try:
+                                    with self.get_srcdatafilereader(src_datafile) as datafilereader:
+                                        for item in datafilereader.rows:
+                                            #fill the computed row
+                                            if self.computed_columns:
+                                                #expand the row first
+                                                for col,col_config in self.computed_columns.items():
+                                                    if col_config[1]:
+                                                        continue
+                                                    item.insert(col_config[0],None)
+    
+                                                #fill the computed column value
+                                                for col,col_config in self.computed_columns.items():
+                                                    if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                        val = datatransformer.transform(
+                                                            col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            databaseurl=self.databaseurl,
+                                                            columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                            context=context,
+                                                            record=item,
+                                                            columnname=self.data_header[col_config[0]],
+                                                            **col_config[2][COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
+                                                        )
+                                                    else:
+                                                        val = datatransformer.transform(
+                                                            col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            databaseurl=self.databaseurl,
+                                                            columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                            context=context,
+                                                            record=item,
+                                                            columnname=self.data_header[col_config[0]]
+                                                        )
+                                                    item[col_config[0]] = val
+    
+                                            #check the filter 
                                             excluded = False
-                                            if  reportcolumns[0] and not reportcolumns[0](val):
-                                                #excluded
-                                                excluded = True
-                                                break
-                                        if excluded:
-                                            #record are excluded
-                                            excluded_rows += 1
-                                            continue
-
-                                        #data are retrieved from source,append the data to local data file
-                                        ExecutorContext.databuff[databuff_index] = item
-                                        dataset_size += 1
-                                        databuff_index += 1
-                                        if databuff_index == ExecutorContext.databuffer_size:
-                                            #databuff is full, flush to file 
-                                            datafilewriter.writerows(ExecutorContext.databuff)
-                                            databuff_index = 0
-
-                                    if databuff_index > 0:
-                                        #still have some data in data buff, flush it to file
-                                        datafilewriter.writerows(ExecutorContext.databuff[:databuff_index])
-
-                                    datafilewriter.close()
-                                    datafilewriter = None
-                                    os.rename(tmp_datafile,datafile)
-                                    utils.set_file_mtime(datafile)
-                                    tmp_datafile = None
-
-                                    logger.info("The data file({0}) is generated from source data file '{1}'.rows = {2}, excluded rows = {3}".format(
-                                        datafile,
-                                        src_datafile,
-                                        dataset_size,
-                                        excluded_rows
-                                    ))
-
-                                #remove source data file if required
-                                if not ExecutorContext.keep_src_datafile:
-                                    utils.remove_file(src_datafile)
-                            finally:
-                                if datafilewriter:
-                                    datafilewriter.close()
-                                if tmp_datafile:
-                                    utils.remove_file(tmp_datafile)
+                                            for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                                val = valueat(item,columnindex)
+                                                excluded = False
+                                                if  reportcolumns[0] and not reportcolumns[0](val):
+                                                    #excluded
+                                                    excluded = True
+                                                    break
+                                            if excluded:
+                                                #record are excluded
+                                                excluded_rows += 1
+                                                continue
+    
+                                            #data are retrieved from source,append the data to local data file
+                                            ExecutorContext.databuff[databuff_index] = item
+                                            dataset_size += 1
+                                            databuff_index += 1
+                                            if databuff_index == ExecutorContext.databuffer_size:
+                                                #databuff is full, flush to file 
+                                                datafilewriter.writerows(ExecutorContext.databuff)
+                                                databuff_index = 0
+    
+                                        if databuff_index > 0:
+                                            #still have some data in data buff, flush it to file
+                                            datafilewriter.writerows(ExecutorContext.databuff[:databuff_index])
+    
+                                        datafilewriter.close()
+                                        datafilewriter = None
+                                        os.rename(tmp_datafile,datafile)
+                                        utils.set_file_mtime(datafile)
+                                        tmp_datafile = None
+    
+                                        logger.info("The data file({0}) is generated from source data file '{1}'.rows = {2}, excluded rows = {3}".format(
+                                            datafile,
+                                            src_datafile,
+                                            dataset_size,
+                                            excluded_rows
+                                        ))
+    
+                                    if context.get("reprocess"):
+                                        #some columns need to be reprocess again
+                                        context.get("reprocess").clear()
+                                        logger.debug("Some columns are required to reprocess, reprocess the file '{}'".format(src_datafile))
+                                        continue
+    
+                                    #remove source data file if required
+                                    if not ExecutorContext.keep_src_datafile:
+                                        utils.remove_file(src_datafile)
+    
+                                    #succeed to process the source file
+                                    break
+                                finally:
+                                    if datafilewriter:
+                                        datafilewriter.close()
+                                    if tmp_datafile:
+                                        utils.remove_file(tmp_datafile)
 
                     #generate index file
                     tmp_index_file = "{}.tmp".format(dataindexfile)
