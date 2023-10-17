@@ -33,7 +33,7 @@ def clean():
     datetimes.clean()
     enums.clean()
 
-def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=False,**kwargs):
+def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=True,**kwargs):
     _func,f = _transformers[f_name]
     return _func(f,val,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,**kwargs)
 
