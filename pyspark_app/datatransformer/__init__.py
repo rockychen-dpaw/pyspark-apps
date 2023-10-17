@@ -14,7 +14,7 @@ from .enums import get_enum,get_enum_key
 logger = logging.getLogger(__name__)
 
 _transformers = {}
-_optional_params = ("databaseurl","columnid","context","record","columnname")
+_optional_params = ("databaseurl","columnid","context","record","columnname","return_id")
 transfer_method_pattern1 = "lambda f,val,{0},**kwargs:f(val,{1},**kwargs)"
 transfer_method_pattern2 = "lambda f,val,{0},**kwargs:f(val,**kwargs)"
 def _transform_factory(f):
@@ -33,7 +33,7 @@ def clean():
     datetimes.clean()
     enums.clean()
 
-def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None,columnname=None,**kwargs):
+def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=False,**kwargs):
     _func,f = _transformers[f_name]
     return _func(f,val,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,**kwargs)
 
