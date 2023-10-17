@@ -618,6 +618,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 #datafile is cached before refersh requested, need to refresh again.
                 logger.debug("The cached data file({}) was cached at {}, but refresh was requesed at {}, refresh the cached data file".format(datafile,timezone.format(utils.file_mtime(datafile)),timezone.format(self.dataset_refresh_requested)))
                 utils.remove_file(datafile)
+            
+            if not os.path.exists(datafile) and os.path.exists(dataindexfile):
+                #datafile doesnot exist, remove data index file
+                utils.remove_file(dataindexfile)
     
             if os.path.exists(dataindexfile):
                 if not os.path.exists(datafile):
