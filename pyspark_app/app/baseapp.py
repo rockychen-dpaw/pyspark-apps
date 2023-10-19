@@ -1526,6 +1526,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             if self.report_type != NoneReportType:
                                 df_datas["__request_time__"] = self.report_type.format(dataset_time)
 
+
                             for item in itertools.chain(self.report_group_by,["|"],self.resultset):
                                 seq += 1
                                 if item == "|":
@@ -1627,7 +1628,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             result = [report_data]
                         else:
                             #return a dict to perform the function 'reducebykey'
-                            result = [(dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data)]
+                            result = [(self.report_type.format(dataset_time),report_data)]
 
                     else:
                         buffer_size = None
@@ -1741,7 +1742,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 result.append(report_data)
                             else:
                                 #return a dict to perform the function 'reducebykey'
-                                result.append((dataset_time.strftime("%Y-%m-%d 00:00:00"),report_data))
+                                result.append((self.report_type.format(dataset_time),report_data))
 
                             start_index += buffer_size
                         
