@@ -51,7 +51,9 @@ string_operator_map = {
     "contain":lambda l,val:np.char.find(l,val)!=-1,
     "not contain":lambda l,val:np.char.find(l,val)==-1,
     "endswith":lambda l,val:np.char.endswith(l,val),
-    "startswith":lambda l,val:np.char.startswith(l,val)
+    "mendswith":lambda l,val:any(np.char.endswith(l,v) for v in val),
+    "startswith":lambda l,val:np.char.startswith(l,val),
+    "mstartswith":lambda l,val:any(np.char.startswith(l,v) for v in val)
 }
 
 agg_operator_map = {
