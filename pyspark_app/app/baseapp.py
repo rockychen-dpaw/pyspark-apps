@@ -1449,7 +1449,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 if ExecutorContext.has_header:
                                     header = datareader.header
                                 else:
-                                    header = self.data_header
+                                    header = self.data_header or []
                                 
                                 if filtered_rows == dataset_size:
                                     #all data are returned
