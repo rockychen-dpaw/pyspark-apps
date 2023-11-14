@@ -7,7 +7,7 @@ import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-LOGGING_CONF = os.environ.get("SPARK_LOGGING_CONF")
+LOGGING_CONF = os.environ.get("LOGGING_CONF")
 if LOGGING_CONF:
     logging.config.fileConfig(LOGGING_CONF)
 
