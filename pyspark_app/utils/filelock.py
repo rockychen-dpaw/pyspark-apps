@@ -59,7 +59,9 @@ class FileLock(object):
                     "lock_time":timezone.localtime()
                 },cls=JSONEncoder).encode())
                 #lock is acquired
-                self.previous_renew_time = file_mtime(self.lockfile)
+                os.close(fd)
+                fd = None
+                self.previous_renew_time = set_file_mtime(self.lockfile)
                 break
             except OSError as e:
                 if e.errno == errno.EEXIST:
