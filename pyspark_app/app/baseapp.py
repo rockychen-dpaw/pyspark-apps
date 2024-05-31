@@ -1921,7 +1921,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
     def merge_reportresult(self,data1,data2):
         """
-         used by nreduce and reducebykey to merge the results returned by spark's map function.
+         used by reduce and reducebykey to merge the results returned by spark's map function.
         """
         if data1 is None:
             return data2
@@ -2272,8 +2272,29 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 found_avg = False
                 found_sum = False
                 previous_item = None
+                #separate the distinct columns
+                self.distinct_columns = None
+                self.distinct_colname = None
+                for i in range(len(self.resultset) - 1,-1,-1):
+                    if self.resultset[i][1] == "distinct":
+                        #distinct columns
+                        if self.distinct_columns:
+                            self.distinct_columns.append(self.resultset[i])
+                        else:
+                            self.distinct_columns = [self.resultset[i]]
+                        if not self.distinct_colname and self.resultset[i][2] != "{}_distinct".format(self.resultset[i][0]):
+                            self.distinct_colname = self.resultset[i][2]
+                        #remove distinct column from resultset
+                        del self.resultset[i]
+                #if have no customized distinct column name, use the default column name
+                if self.distinct_columns and not self.distinct_colname:
+                    self.distinct_colname = "{}_distinct".format(self.distinct_columns[0][0])
+
                 #backup the original resultset, deep clone
                 original_resultset = [[c[0],c[1],c[2] if c[2] else ("{}-{}".format(c[0],c[1]) if c[1] else c[0])] for c in self.resultset]
+                #add the distinct column to original_resultset
+                if self.distinct_columns:
+                    original_resultset.insert(0,[self.distinct_columns[0][0],"distinct",self.distinct_colname])
                 self.resultset.sort()
                 for i in range(len(self.resultset) - 1,-1,-1):
                     item = self.resultset[i]
@@ -2349,8 +2370,23 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 #this report will return all log details, report_group_by is meanless
                 self.report_group_by = None
                 self.report_sort_by = None
+                self.distinct_columns = None
+                self.self.distinct_colname = None
                 self.report_type = NoneReportType
             else:
+                #add distinct columns to report_group_by
+                if self.distinct_columns:
+                    if self.report_group_by is None:
+                        self.report_group_by = []
+                    for col in self.distinct_columns:
+                        self.report_group_by.append(col[0])
+
+                    #replace sort by column 'distinct' with distinct_colname if have
+                    if self.report_sort_by:
+                        sort_col = next((c for c in self.report_sort_by if c[0] == "distinct"),None)
+                        if sort_col:
+                            sort_col[0] = self.distinct_colname
+
                 if self.report_group_by:
                     for item in self.report_group_by:
                         if item not in self.column_map:
@@ -2549,12 +2585,35 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         ))
 
                 if self.report_group_by:
-                    if self.report_type == NoneReportType:
-                        report_result = rdd.reduceByKey(self.merge_reportresult).collect()
+                    if self.distinct_columns:
+                        #perfrom group by first
+                        rdd2 = rdd.reduceByKey(self.merge_reportresult)
+
+                        #add a columu to resultset
+                        self.resultset.insert(0,[self.distinct_columns[0],"distinct",self.distinct_colname])
+
+                        #remove distinct columns from key and add a column into value
+                        if len(self.report_group_by) == len(self.distinct_columns) and self.report_type == NoneReportType:
+                            rdd3 = rdd2.flatMap(lambda d:[[1,*d[1]]])
+                            report_result = rdd3.reduce(self.merge_reportresult).collect()
+                        else:
+                            rdd3 = rdd2.flatMap(lambda d:[[d[0][:-1 * len(self.distinct_columns)],[1,*d[1]]]])
+                            report_result = rdd3.reduceByKey(self.merge_reportresult).collect()
+
+                        #remove distinct columns from report_group_by
+                        self.report_group_by = self.report_group_by[:-1 * len(self.distinct_columns)]
                     else:
                         #the result is grouped by report_type
-                        #a new column is added to the group_by
+                        #a new column is added to resultset
                         report_result = rdd.reduceByKey(self.merge_reportresult).collect()
+                        self.report_group_by = ["__request_time__"]
+
+                    else:
+                        report_result = rdd.reduceByKey(self.merge_reportresult).collect()
+
+                    if self.report_type != NoneReportType:
+                        #the result is grouped by report_type
+                        #a new column is added to the group_by
                         self.report_group_by.insert(0,"__request_time__")
                         if self.report_sort_by:
                             self.report_sort_by.insert(0,["__request_time__",True])
