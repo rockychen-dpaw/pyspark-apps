@@ -1764,6 +1764,7 @@ def distinct_transform_factory(column_map,distinct_columns,has_group_by):
     length = len(distinct_columns)
     logger.error("*********ignore_empty_values={}".format(ignore_empty_values))
     def _func1(d):
+        logger.error("*********distinct values={}  has={}".format([d[0][i - length] for i in range(length)],any(i for i in range(length) if ignore_empty_values[i] and not d[0][i - length])))
         return [[d[0][:-1 * length],[0 if any(i for i in range(length) if ignore_empty_values[i] and not d[0][i - length]) else 1 ,*d[1]]]]
 
     def _func2(d):
