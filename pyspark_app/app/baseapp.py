@@ -2635,6 +2635,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         item.append(self.get_report_avg_factory(item))
                     elif item[1] == "count":
                         item.append(self.get_report_data_factory(next(i for i in range(len(self.resultset)) if self.resultset[i][1] == "count" )))
+                    elif item[1] == "distinct":
+                        item.append(self.get_report_data_factory(next(i for i in range(len(self.resultset)) if self.resultset[i][1] == "distinct" )))
                     else:
                         item.append(self.get_report_data_factory(next(i for i in range(len(self.resultset)) if self.resultset[i][0] == item[0] and self.resultset[i][1] == item[1] )))
     
