@@ -1762,10 +1762,11 @@ DRIVER_GROUPABLE=6
 def distinct_transform_factory(column_map,distinct_columns,has_group_by):
     ignore_empty_values = [ column_map[c[0]][DRIVER_COLUMNINFO].get("distinct",{}).get("ignore_empty_value",False) for c in distinct_columns]
     length = len(distinct_columns)
+    logger.error("*********ignore_empty_values={}".format(ignore_empty_values))
     def _func1(d):
         return [[d[0][:-1 * length],[0 if any(i for i in range(length) if ignore_empty_values[i] and not d[0][i - length]) else 1 ,*d[1]]]]
 
-    def _func2(data):
+    def _func2(d):
         return [[0 if any(i for i in range(length) if ignore_empty_values[i] and not d[0][i - length]) else 1 ,*d[1]]]
     
     return _func1 if has_group_by else _func2
