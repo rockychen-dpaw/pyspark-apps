@@ -1759,6 +1759,18 @@ DRIVER_STATISTICAL=4
 DRIVER_FILTERABLE=5
 DRIVER_GROUPABLE=6
 
+def distinct_transform_factory(column_map,distinct_columns,has_group_by):
+    ignore_empty_values = [ column_map[c[0]][DRIVER_COLUMNINFO].get("distinct",{}).get("ignore_empty_value",False) for c in distinct_columns]
+    length = len(distinct_columns)
+    def _func1(data):
+        return [[d[0][:-1 * length],[0 if any(i for i in range(length) if ignore_empty_values[i] and not data[i - length]) else 1 ,*d[1]]]]
+
+    def _func2(data):
+        return [[0 if any(i for i in range(length) if ignore_empty_values[i] and not data[i - length]) else 1 ,*d[1]]]
+    
+    return _func1 if has_group_by else _func2
+
+
 class ReportAlreadyGenerated(Exception):
     pass
     
@@ -2594,10 +2606,10 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
                         #remove distinct columns from key and add a column into value
                         if len(self.report_group_by) == len(self.distinct_columns) and self.report_type == NoneReportType:
-                            rdd3 = rdd2.flatMap(lambda d:[[1,*d[1]]])
+                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.column_map,self.distinct_columns,False))
                             report_result = rdd3.reduce(self.merge_reportresult).collect()
                         else:
-                            rdd3 = rdd2.flatMap(lambda d:[[d[0][:-1 * len(self.distinct_columns)],[1,*d[1]]]])
+                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.column_map,self.distinct_columns,True))
                             report_result = rdd3.reduceByKey(self.merge_reportresult).collect()
 
                         #remove distinct columns from report_group_by
