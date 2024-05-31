@@ -2603,12 +2603,6 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         #remove distinct columns from report_group_by
                         self.report_group_by = self.report_group_by[:-1 * len(self.distinct_columns)]
                     else:
-                        #the result is grouped by report_type
-                        #a new column is added to resultset
-                        report_result = rdd.reduceByKey(self.merge_reportresult).collect()
-                        self.report_group_by = ["__request_time__"]
-
-                    else:
                         report_result = rdd.reduceByKey(self.merge_reportresult).collect()
 
                     if self.report_type != NoneReportType:
