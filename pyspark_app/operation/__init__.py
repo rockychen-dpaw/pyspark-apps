@@ -86,7 +86,8 @@ merge_operator_map = {
     "count":_merge_count,#lambda d1,d2: int(d1 + d2),
     "min":lambda d1,d2: d1 if d1 <= d2 else d2,
     "max":lambda d1,d2: d1 if d1 >= d2 else d2,
-    "sum":lambda d1,d2: d1 + d2
+    "sum":lambda d1,d2: d1 + d2,
+    "distinct":lambda d1,d2: d1 + d2
 }
 
 def get_func(dtype,operator):
