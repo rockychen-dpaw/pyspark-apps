@@ -2294,7 +2294,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                             self.distinct_columns.append(self.resultset[i])
                         else:
                             self.distinct_columns = [self.resultset[i]]
-                        if not self.distinct_colname and self.resultset[i][2] != "{}_distinct".format(self.resultset[i][0]):
+                        if not self.distinct_colname and self.resultset[i][2] != "count(distinct {})".format(self.resultset[i][0]):
                             self.distinct_colname = self.resultset[i][2]
                         #remove distinct column from resultset
                         del self.resultset[i]
