@@ -539,7 +539,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         previous_columnindex = None
                         columns = None
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
-                            if d[0] != -1 and d[10]:
+                            if d[0] != -1 and d[11]:
                                 #computed column
                                 if d[5].get("parameters"):
                                     d[5]["parameters"]["return_id"] = False
@@ -1072,7 +1072,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         with conn.cursor() as cursor:
                             cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
-                                if d[10]:
+                                if d[11]:
                                     if d[5].get("parameters"):
                                         d[5]["parameters"]["return_id"] = False
                                     else:
