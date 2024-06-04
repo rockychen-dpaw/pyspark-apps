@@ -33,7 +33,8 @@ EXECUTOR_COLUMNINFO=4
 EXECUTOR_STATISTICAL=5
 EXECUTOR_FILTERABLE=6
 EXECUTOR_GROUPABLE=7
-EXECUTOR_REFRESH_REQUESTED=8
+EXECUTOR_DISTINCTABLE=8
+EXECUTOR_REFRESH_REQUESTED=9
 
 COMPUTEDCOLUMN_COLUMNID = 0
 COMPUTEDCOLUMN_COLUMNINDEX = 1
@@ -534,7 +535,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                 with database.Database(self.databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
                         #load dataset columns
-                        cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
+                        cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                         previous_columnindex = None
                         columns = None
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
@@ -557,13 +558,13 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                     break
         
                                 previous_columnindex = d[0]
-                                columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])]]
+                                columns = [[d[5].get("include") if d[5] else None,d[5].get("exclude") if d[5] else None],[(d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9],d[10])]]
                                 ExecutorContext.allreportcolumns[d[0]] = columns
                                 if d[5] and (d[5].get("include") or d[5].get("exclude")):
                                     ExecutorContext.has_datafilter = True
 
                             else:
-                                columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9]))
+                                columns[1].append((d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9],d[10]))
                                 if d[5]:
                                     if d[5].get("include"):
                                         if columns[0][0]:
@@ -1069,7 +1070,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                     ExecutorContext.column_map = {}
                     with database.Database(self.databaseurl).get_conn(True) as conn:
                         with conn.cursor() as cursor:
-                            cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
+                            cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
                                 if d[10]:
                                     if d[5].get("parameters"):
@@ -1079,7 +1080,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
 
                                     self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
                                 else:
-                                    ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9])
+                                    ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9],d[10])
 
                 for column_config in ExecutorContext.column_map.values():
                     if column_config[EXECUTOR_COLUMNINFO].get("include") or column_config[EXECUTOR_COLUMNINFO].get("exclude"):
@@ -1758,6 +1759,7 @@ DRIVER_COLUMNINFO=3
 DRIVER_STATISTICAL=4
 DRIVER_FILTERABLE=5
 DRIVER_GROUPABLE=6
+DRIVER_DISTINCTABLE=7
 
 def distinct_transform_factory(distinct_columns,has_group_by):
     exclude_null = [ True if c[1] == "distinct_exclude_null" else False for c in distinct_columns]
@@ -1823,7 +1825,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
             raise Exception("Dataset({}) doesn't exist.".format(self.datasetid))
         self.datasetname,self.datasetinfo,self.dataset_refresh_requested,self.dataset_modified = dataset
 
-        cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
+        cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
         for row in cursor.fetchall():
              self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
     
@@ -2403,8 +2405,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     for item in self.report_group_by:
                         if item not in self.column_map:
                             raise Exception("The group-by column({1}) does not exist for report({0})".format(self.reportid,item))
-                        if not self.column_map[item][DRIVER_GROUPABLE]:
-                            raise Exception("The group-by column({1}) is not groupable for report({0})".format(self.reportid,item))
+                        if not self.column_map[item][DRIVER_GROUPABLE] and not self.column_map[item][DRIVER_DISTINCTABLE]:
+                            raise Exception("The group-by column({1}) is not groupable|distinctable for report({0})".format(self.reportid,item))
                 else:
                     #group_by is not enabled, all report data are statistical data,and only contains one row,
                     #report sort by is useless
