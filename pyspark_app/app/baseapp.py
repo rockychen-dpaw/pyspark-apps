@@ -1340,7 +1340,8 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 else:
                                     column_data = buffer[1]
                             else:
-                                column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]))
+                                column_size = col[EXECUTOR_COLUMNINFO].get("size",64) if col[EXECUTOR_COLUMNINFO] else 64
+                                column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],column_size))
                                 ExecutorContext.report_data_buffers[itemid] = [(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]),column_data]
 
                             ds = index_h5[col[EXECUTOR_COLUMNNAME]]
@@ -1557,7 +1558,8 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                         else:
                                             column_data = buffer[1]
                                     else:
-                                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                        column_size = col[EXECUTOR_COLUMNINFO].get("size",64) if col[EXECUTOR_COLUMNINFO] else 64
+                                        column_data = np.empty((dataset_size,),dtype=datatransformer.get_np_type(col_type,column_size))
                                         ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                              
                                     ds = index_h5[colname]
@@ -1691,7 +1693,8 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                             else:
                                                 column_data = buffer[1]
                                         else:
-                                            column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col_type,col[EXECUTOR_COLUMNINFO]))
+                                            column_size = col[EXECUTOR_COLUMNINFO].get("size",64) if col[EXECUTOR_COLUMNINFO] else 64
+                                            column_data = np.empty((buffer_size,),dtype=datatransformer.get_np_type(col_type,column_size))
                                             ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                                     
                                         ds = index_h5[item[0]]
