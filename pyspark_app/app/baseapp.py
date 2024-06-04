@@ -2385,7 +2385,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.report_group_by = None
                 self.report_sort_by = None
                 self.distinct_columns = None
-                self.self.distinct_colname = None
+                self.distinct_colname = None
                 self.report_type = NoneReportType
             else:
                 #add distinct columns to report_group_by
