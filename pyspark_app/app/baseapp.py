@@ -530,7 +530,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
     
                 ExecutorContext.data_cache_dir = os.path.join(cache_dir,"data")
 
-                #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn))
+                #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn))
                 ExecutorContext.allreportcolumns = {}
                 with database.Database(self.databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
@@ -641,8 +641,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                     with h5py.File(dataindexfile,'r') as index_file:
                         if any(index_file.keys()):
                             for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                    if  not column_filterable and not column_groupable and not column_statistical:
+                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_requested in reportcolumns[1]:
+                                    if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
                                         continue
                                     try:
                                         #check whether the dataset is accessable by getting the size
@@ -685,8 +685,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                             try:
                                 with h5py.File(dataindexfile,'r') as index_file:
                                     for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                            if  not column_filterable and not column_groupable and not column_statistical:
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_requested in reportcolumns[1]:
+                                            if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
                                                 continue
                                             try:
                                                 #check whether the dataset is accessable by getting the size
@@ -906,8 +906,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                     for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
                                         value = valueat(item,columnindex)
 
-                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_required in reportcolumns[1]:
-                                            if  not column_filterable and not column_groupable and not column_statistical:
+                                        for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_required in reportcolumns[1]:
+                                            if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
                                                 #no need to create index 
                                                 continue
                                             if process_required_columns and column_name not in process_required_columns:
@@ -973,8 +973,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                             #still have data in buff, write them to hdf5 file
                             if indexbuff_index > 0:
                                 for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_refresh_requested in reportcolumns[1]:
-                                        if  not column_filterable and not column_groupable and not column_statistical:
+                                    for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_requested in reportcolumns[1]:
+                                        if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
                                             continue
                 
                                         if process_required_columns and column_name not in process_required_columns:
@@ -1785,7 +1785,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
         self.datasetid = None
 
         #app_configs
-        self.column_map = {} #map between column name and [columnid,dtype,transformer,statistical,filterable,groupable]
+        self.column_map = {} #map between column name and [columnid,dtype,transformer,statistical,filterable,groupable,distinctable]
         self.datasetname = None
         self.datasetinfo = None
         self.dataset_refresh_requested = None
@@ -1827,7 +1827,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
 
         cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
         for row in cursor.fetchall():
-             self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7]]
+             self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]]
     
     def post_init(self):
         #validate the datasetinfo
@@ -2208,7 +2208,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     col = self.column_map[cond[0]]
                     col_type = col[DRIVER_DTYPE]
     
-                    #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
+                    #"select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(datasetid))
                     #map the value to internal value used by dataset
                     cond[2] = cond[2].strip() if cond[2] else cond[2]
                     cond[2] = json.loads(cond[2])
