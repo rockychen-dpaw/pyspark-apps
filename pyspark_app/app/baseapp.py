@@ -1759,14 +1759,14 @@ DRIVER_STATISTICAL=4
 DRIVER_FILTERABLE=5
 DRIVER_GROUPABLE=6
 
-def distinct_transform_factory(column_map,distinct_columns,has_group_by):
-    ignore_empty_values = [ column_map[c[0]][DRIVER_COLUMNINFO].get("distinct",{}).get("ignore_empty_value",False) for c in distinct_columns]
+def distinct_transform_factory(distinct_columns,has_group_by):
+    exclude_null = [ True if c[1] == "distinct_exclude_null" else False for c in distinct_columns]
     length = len(distinct_columns)
     def _func1(d):
-        return [[d[0][:-1 * length],[0 if any(True for i in range(length) if ignore_empty_values[i] and not d[0][i - length]) else 1 ,*d[1]]]]
+        return [[d[0][:-1 * length],[0 if any(True for i in range(length) if exclude_null[i] and not d[0][i - length]) else 1 ,*d[1]]]]
 
     def _func2(d):
-        return [[0 if any(True for i in range(length) if ignore_empty_values[i] and not d[0][i - length]) else 1 ,*d[1]]]
+        return [[0 if any(True for i in range(length) if exclude_null[i] and not d[0][i - length]) else 1 ,*d[1]]]
     
     return _func1 if has_group_by else _func2
 
@@ -2288,7 +2288,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.distinct_columns = None
                 self.distinct_colname = None
                 for i in range(len(self.resultset) - 1,-1,-1):
-                    if self.resultset[i][1] == "distinct":
+                    if self.resultset[i][1].startswith("distinct"):
                         #distinct columns
                         if self.distinct_columns:
                             self.distinct_columns.append(self.resultset[i])
@@ -2300,7 +2300,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         del self.resultset[i]
                 #if have no customized distinct column name, use the default column name
                 if self.distinct_columns and not self.distinct_colname:
-                    self.distinct_colname = "{}_distinct".format(self.distinct_columns[0][0])
+                    self.distinct_colname = "count(distinct {})".format(self.distinct_columns[0][0])
 
                 #backup the original resultset, deep clone
                 original_resultset = [[c[0],c[1],c[2] if c[2] else ("{}-{}".format(c[0],c[1]) if c[1] else c[0])] for c in self.resultset]
@@ -2606,10 +2606,10 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
                         #remove distinct columns from key and add a column into value
                         if len(self.report_group_by) == len(self.distinct_columns) and self.report_type == NoneReportType:
-                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.column_map,self.distinct_columns,False))
+                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,False))
                             report_result = rdd3.reduce(self.merge_reportresult).collect()
                         else:
-                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.column_map,self.distinct_columns,True))
+                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,True))
                             report_result = rdd3.reduceByKey(self.merge_reportresult).collect()
 
                         #remove distinct columns from report_group_by
