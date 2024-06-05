@@ -1,6 +1,7 @@
 import logging
 import traceback
 import os
+import re
 import itertools
 import collections
 import json
@@ -41,6 +42,15 @@ COMPUTEDCOLUMN_COLUMNINDEX = 1
 COMPUTEDCOLUMN_TRANSFORMER = 2
 COMPUTEDCOLUMN_COLUMNINFO = 3
 
+
+def init_column_parameters(parameters):
+    if not parameters:
+        return
+    for k,v in parameters.items():
+        if v.startswith("lambda"):
+            parameters[k] = eval(v)
+        elif "pattern" in k:
+            parameters[k] = re.compile(v)
 
 class NoneReportType(object):
     ID = None
@@ -539,6 +549,9 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         previous_columnindex = None
                         columns = None
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
+                            #init column parameters
+                            init_column_parameters(d[5].get("parameters"))
+
                             if d[0] != -1 and d[11]:
                                 #computed column
                                 if d[5].get("parameters"):
@@ -763,7 +776,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                             #generate the data file from src file
                             tmp_datafile = "{}.tmp".format(datafile)
                             context={
-                                "dataset_time":dataset_time
+                                "dstime":dataset_time,
+                                "dsfile":datafile,
+                                "phase":"Download",
+                                "category":"Transform Computed Column Data"
                             }
                             while True:
                                 datafilewriter = self.get_datafilewriter(file=tmp_datafile,header=self.data_header if ExecutorContext.has_header else None)
@@ -890,7 +906,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                     indexbuff_baseindex = 0
                     indexbuff_index = 0
                     context={
-                        "dataset_time":dataset_time
+                        "dstime":dataset_time,
+                        "dsfile":datafile,
+                        "phase":"Download",
+                        "category":"Transform Column Data"
                     }
                     created = timezone.timestamp()
                     indexdatasets = {}
@@ -1072,6 +1091,9 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         with conn.cursor() as cursor:
                             cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
+                                #init column parameters
+                                init_column_parameters(d[5].get("parameters"))
+
                                 if d[11]:
                                     if d[5].get("parameters"):
                                         d[5]["parameters"]["return_id"] = False
@@ -1830,6 +1852,9 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
 
         cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
         for row in cursor.fetchall():
+             #init column parameters
+             init_column_parameters(row[4].get("parameters"))
+
              self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]]
     
     def post_init(self):
@@ -2206,6 +2231,10 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.report_conditions.sort(key=lambda cond:(0 if self.column_map[cond[0]][DRIVER_COLUMNINFO].get("read_direct",False if datatransformer.is_string_type(self.column_map[cond[0]][DRIVER_DTYPE]) else True) else 1,cond))
                 #try to map the value to internal value used by dataset
                 #Append a member to each cond to indicate the mapping status: if the member is False, value is mapped or no need to map; value is True or the indexes of the data which need to be mapped.
+                context = {
+                    "phase":"Report",
+                    "category":"Parse Report Condition"
+                }
                 for cond in self.report_conditions:
                     #each condition is a tuple(column, operator, value), value is dependent on operator and column type
                     col = self.column_map[cond[0]]
@@ -2224,9 +2253,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                     cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
                                 else:
                                     if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
-                                        cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
+                                        cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"],context=context)
                                     else:
-                                        cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+                                        cond[2][i] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],context=context)
  
                                     if datatransformer.is_string_type(col[DRIVER_DTYPE]):
                                         for i in range(len(cond[2])):
@@ -2256,9 +2285,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                 cond[2] = datatransformer.get_enum(cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
                             else:
                                 if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
-                                    cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"])
+                                    cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"],context=context)
                                 else:
-                                    cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+                                    cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],context=context)
 
                                 if datatransformer.is_string_type(col[DRIVER_DTYPE]):
                                     cond[2] = cond[2]

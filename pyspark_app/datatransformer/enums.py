@@ -17,126 +17,131 @@ logger = logging.getLogger(__name__)
 enum_dicts = {
 }
 
-pattern_map = {}
-function_map = {}
+def str2enum(key,databaseurl=None,columnid=None,columnname=None,context=None,record=None,is_valid=None,values=None,pattern=None,default=None):
+    if not columnid:
+        raise Exception("Missing column id")
+    if not databaseurl:
+        raise Exception("Missing database url")
 
-def str2enum(key,databaseurl=None,columnid=None,pattern=None,default=None,columnname=None):
-    try:
-        if not columnid:
-            raise Exception("Missing column id")
-        if not databaseurl:
-            raise Exception("Missing database url")
-        if pattern and not default:
-            raise Exception("Please configure the parameter 'default' for column({})".format(columnname))
-    
-        key = key.strip() if (key and key.strip()) else ""
-    
-        if columnid not in enum_dicts:
-            enum_dicts[columnid] = {}
-            with database.Database(databaseurl).get_conn() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
-                    for row in cursor.fetchall():
-                        enum_dicts[columnid][row[0]] = row[1]
-    
-            if key in enum_dicts[columnid]:
-                return enum_dicts[columnid][key]
-    
-        elif key in enum_dicts[columnid]:
-            return enum_dicts[columnid][key]
-        
-        if pattern:
-            if pattern in pattern_map:
-                pattern_re = pattern_map[pattern]
-            else:
-                pattern_re = re.compile(pattern)
-                pattern_map[pattern] = pattern_re
-            if pattern_re.search(key):
-                valid_key = True
-            else:
-                #not a valid domain
-                if default in enum_dicts:
-                    return enum_dicts[default]
-                valid_key = False
-        else:
-            valid_key = True
+    key = key.strip() if (key and key.strip()) else ""
 
-        dbkey = key.replace("'","''") 
-        sql = None
+    #try to get the value from cache
+    if columnid not in enum_dicts:
+        enum_dicts[columnid] = {}
         with database.Database(databaseurl).get_conn() as conn:
             with conn.cursor() as cursor:
-                if not valid_key:
+                cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
+                for row in cursor.fetchall():
+                    enum_dicts[columnid][row[0]] = row[1]
+
+        if key in enum_dicts[columnid]:
+            return enum_dicts[columnid][key]
+
+    elif key in enum_dicts[columnid]:
+        return enum_dicts[columnid][key]
+
+    #check whether the key is valid or not
+    valid_key = True
+    if (values and key not in values) or (is_valid and not is_valid(key) or (pattern and not pattern.search(key))):
+        #key is invalid
+        if default is not None:
+            #a default value is configured,use the default value
+            if default in enum_dicts:
+                return enum_dicts[default]
+            else:
+                valid_key = False
+        elif context["phase"] == "Download":
+            #can't parse the key, raise exception
+            with database.Database(databaseurl).get_conn() as conn:
+                with conn.cursor() as cursor:
+                    if context.get("dsfile"):
+                        msg = "The value({2}) of the column({1}) is invalid for dataset file({0}).record={3}".format(context["dsfile"],columnname,key,record)
+                    else:
+                        msg = "The value({1}) of the column({0}) is invalid.".format(columnname,key)
+
                     sql = """
-INSERT INTO datascience_datasetenum 
-    (column_id,key,value,info) 
+INSERT INTO datascience_runningissue
+    ("phase","category","dstime","dsfile","message","created") 
 VALUES 
-    ({0},'{1}', 0,'{{}}')
+    ('{0}','{1}', '{2}','{3}','{4}','{5}')
+""".format(
+                        context["phase"],
+                        context['category'], 
+                        timezone.dbtime(context.get("dstime")) if context.get("dstime") else 'null', 
+                        context.get("dsfile","null"),
+                        msg,
+                        timezone.dbtime()
+                    )
+                    try:
+                        cursor.execute(sql)
+                        conn.commit()
+                    except:
+                        conn.rollback()
+                        raise
+                    
+            raise Exception("The value({2}) of the column({1}) is invalid,context={0}".format(context,columnname,key))
+
+    sql = None
+    with database.Database(databaseurl).get_conn() as conn:
+        with conn.cursor() as cursor:
+            if not valid_key:
+                #use the default value
+                sql = """
+INSERT INTO datascience_datasetenum 
+(column_id,key,value,info) 
+VALUES 
+({0},'{1}', 0,'{{}}')
 ON CONFLICT (column_id,value) DO UPDATE 
 SET key='{1}'
 """.format(columnid,default)
-                    cursor.execute(sql)
-                    conn.commit()
-                    enum_dicts[default] = 0
-                    return 0
-    
+                cursor.execute(sql)
+                conn.commit()
+                enum_dicts[default] = 0
+                return 0
+
+            dbkey = key.replace("'","''") 
+            sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
+            cursor.execute(sql)
+            data = cursor.fetchone()
+            if data:
+                enum_dicts[columnid][key] = data[0]
+                return data[0]
+
+            if context["phase"] != "Download":
+                #not in phase 'Download', the key should exist.
+                raise Exception("The value({1}) of the column({0}) is not recognized.".format(columnname,key))
+
+            sql = "update datascience_datasetcolumn set sequence=COALESCE(sequence,0) + 1,modified='{1}' where id = {0} ".format(columnid,timezone.dbtime())
+            cursor.execute(sql)
+            if cursor.rowcount == 0:
+                raise Exception("Dataset Column({}) does not exist".format(columnid))
+            sql = "select sequence from datascience_datasetcolumn where id = {}".format(columnid)
+            cursor.execute(sql)
+            try:
+                sequence = cursor.fetchone()[0]
+                sql = "insert into datascience_datasetenum (column_id,key,value,info) values ({},'{}',{},'{{}}')".format(columnid,dbkey,sequence)
+                cursor.execute(sql)
+                conn.commit()
+            except:
+                #should already exist, if database is accessable
+                conn.rollback()
                 sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
                 cursor.execute(sql)
-                data = cursor.fetchone()
-                if data:
-                    enum_dicts[columnid][key] = data[0]
-                    return data[0]
-
-                sql = "update datascience_datasetcolumn set sequence=COALESCE(sequence,0) + 1,modified='{1}' where id = {0} ".format(columnid,timezone.dbtime())
-                cursor.execute(sql)
-                if cursor.rowcount == 0:
-                    raise Exception("Dataset Column({}) does not exist".format(columnid))
-                sql = "select sequence from datascience_datasetcolumn where id = {}".format(columnid)
-                cursor.execute(sql)
-                try:
-                    sequence = cursor.fetchone()[0]
-                    sql = "insert into datascience_datasetenum (column_id,key,value,info) values ({},'{}',{},'{{}}')".format(columnid,dbkey,sequence)
-                    cursor.execute(sql)
-                    conn.commit()
-                except:
-                    #should already exist, if database is accessable
-                    conn.rollback()
-                    sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
-                    cursor.execute(sql)
-                    sequence = cursor.fetchone()[0]
-        
-                enum_dicts[columnid][key] = sequence
-                return sequence
-    except:
-        logger.error("Failed to convert the value({1}) of column({0}) to enum.sql={2}{3}{4}".format(columnname,key,sql,os.linesep,traceback.format_exc()))
-        raise
-
+                sequence = cursor.fetchone()[0]
+    
+            enum_dicts[columnid][key] = sequence
+            return sequence
 
 #domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*(:[0-9]+)?$")
-def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,is_invalid=None,default_domain=None,context=None,domain_pattern=None,return_id=True):
+def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,context=None,return_id=True,is_valid=None,,is_notfound=None,default=None,pattern=None):
     try:
         if not columnid:
             raise Exception("Missing column id")
         if not databaseurl:
             raise Exception("Missing database url")
-        if not default_domain:
-            raise Exception("Please configure the parameter 'default_domain' for column({})".format(columnname))
+        if not default:
+            raise Exception("Please configure the parameter 'default' for column({})".format(columnname))
 
-        if domain_pattern:
-            domain_re = pattern_map.get(domain_pattern)
-            if not domain_re:
-                domain_re = re.compile(domain_pattern)
-                pattern_map[domain_pattern] = domain_re
-        else:
-            domain_re = None
-
-        if is_invalid:
-            f_invalid = function_map.get(is_invalid)
-            if not f_invalid:
-                f_invalid = eval(is_invalid)
-                function_map[is_invalid] = f_invalid
-        else:
-            f_invalid = None
-    
         key = key.strip() if (key and key.strip()) else ""
     
         if columnid not in enum_dicts:
@@ -153,10 +158,10 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
         elif key in enum_dicts[columnid]:
             return enum_dicts[columnid][key] if return_id else key
         
-        if domain_re and not domain_re.search(key):
+        if (pattern and not pattern.search(key)) or (is_valid and not is_valid(key)):
             #not a valid domain
-            if default_domain in enum_dicts:
-                return enum_dicts[columnid][default_domain] if return_id else default_domain
+            if default in enum_dicts:
+                return enum_dicts[columnid][default] if return_id else default
             valid_domain = False
         else:
             valid_domain = True
@@ -174,7 +179,7 @@ def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,i
                             context["reprocess"].add(columnname)
                             return data[0] if return_id else key
 
-                        if f_invalid and f_invalid(key,record):
+                        if is_notfound and is_notfound(key,record):
                             valid_domain = False
                     
                     #request a non-exist domain, maybe sent by hacker
@@ -187,11 +192,11 @@ VALUES
     ({0},'{1}', 0,'{{}}')
 ON CONFLICT (column_id,value) DO UPDATE 
 SET key='{1}'
-""".format(columnid,default_domain)
+""".format(columnid,default)
                         cursor.execute(sql)
                         conn.commit()
-                        enum_dicts[columnid][default_domain] = 0
-                        return 0 if return_id else default_domain
+                        enum_dicts[columnid][default] = 0
+                        return 0 if return_id else default
                 except:
                     conn.rollback()
                     raise
