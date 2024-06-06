@@ -133,7 +133,7 @@ SET key='{1}'
             return sequence
 
 #domain_re = re.compile("^[a-zA-Z0-9_\-\.]+(\.[a-zA-Z0-9_\-]+)*(:[0-9]+)?$")
-def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,context=None,return_id=True,is_valid=None,,is_notfound=None,default=None,pattern=None):
+def domain2enum(key,databaseurl=None,columnid=None,columnname=None,record=None,context=None,return_id=True,is_valid=None,is_notfound=None,default=None,pattern=None):
     try:
         if not columnid:
             raise Exception("Missing column id")

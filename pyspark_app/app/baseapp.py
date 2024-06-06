@@ -852,6 +852,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                         if databuff_index > 0:
                                             #still have some data in data buff, flush it to file
                                             datafilewriter.writerows(ExecutorContext.databuff[:databuff_index])
+                                            databuff_index = 0
     
                                         datafilewriter.close()
                                         datafilewriter = None
