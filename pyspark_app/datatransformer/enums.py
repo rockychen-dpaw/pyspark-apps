@@ -58,6 +58,7 @@ def str2enum(key,databaseurl=None,columnid=None,columnname=None,context=None,rec
                         msg = "The value({2}) of the column({1}) is invalid for dataset file({0}).record={3}".format(context["dsfile"],columnname,key,record)
                     else:
                         msg = "The value({1}) of the column({0}) is invalid.".format(columnname,key)
+                    msg = msg.replace("'","''")
 
                     sql = """
 INSERT INTO datascience_runningissue
