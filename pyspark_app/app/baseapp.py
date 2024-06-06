@@ -550,7 +550,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         columns = None
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
                             #init column parameters
-                            init_column_parameters(d[5].get("parameters"))
+                            if d[0] != -1 :
+                                init_column_parameters(d[5].get("parameters"))
 
                             if d[0] != -1 and d[11]:
                                 #computed column
