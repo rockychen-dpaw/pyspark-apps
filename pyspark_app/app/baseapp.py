@@ -47,7 +47,7 @@ def init_column_parameters(parameters):
     if not parameters:
         return
     for k,v in parameters.items():
-        if v.startswith("lambda"):
+        if isinstance(v,str) and v.startswith("lambda"):
             parameters[k] = eval(v)
         elif "pattern" in k:
             parameters[k] = re.compile(v)
