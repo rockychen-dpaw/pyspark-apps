@@ -21,7 +21,7 @@ class LocalResourceHarvester(ResourceHarvester):
             self._home = home
 
     def saveas(self,path,destfilename,columns=None,starttime=None,endtime=None):
-        shutil.copyfile(self.get_abs_path(resource),f)
+        shutil.copyfile(self.get_abs_path(path),destfilename)
         return (False,columns)
 
     def is_local(self):

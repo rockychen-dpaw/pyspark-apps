@@ -25,7 +25,7 @@ def _string_in(l,vals):
 
     return result
 
-number_operator_map = {
+number_npoperator_map = {
     "==":lambda l,val:np.equal(l,val),
     "=":lambda l,val:np.equal(l,val),
     "!=":lambda l,val:np.equal(l,val) == False,
@@ -42,7 +42,7 @@ number_operator_map = {
     "max":lambda l:np.max(l)
 }
 
-string_operator_map = {
+string_npoperator_map = {
     "==":lambda l,val:np.char.equal(l,val),
     "=":lambda l,val:np.char.equal(l,val),
     "!=":lambda l,val:np.char.equal(l,val) == False,
@@ -61,6 +61,33 @@ agg_operator_map = {
     "max":"max",
     "sum":"sum",
     "count":"count"
+}
+
+number_operator_map = {
+    "==":lambda l == val,
+    "=":lambda l,val:l == val,
+    "!=":lambda l,val: l != val,
+    "<>":lambda l,val: l != val,
+    ">":lambda l,val: l > val,
+    ">=":lambda l,val: l >= val,
+    "<":lambda l,val:l < val,
+    "<=":lambda l,val:l <= val,
+    "between":lambda l,val:l >= val[0] & l < val[1],
+    "in":lambda l,vals: l in vals
+}
+
+string_operator_map = {
+    "==":lambda l,val:l == val,
+    "=":lambda l,val:l == val,
+    "!=":lambda l,val:l != val,
+    "<>":lambda l,val:l != val,
+    "in":lambda l,vals: l in vals,
+    "contain":lambda l,val:l in val,
+    "not contain":lambda l,val:l not in val,
+    "endswith":lambda l,val: l.endswith(val) if l else False,
+    "mendswith":lambda l,val:any(l.endswith(v) for v in val) if l else False,
+    "startswith":lambda l,val:l.startswith(val) if l else False,
+    "mstartswith":lambda l,val:any(l.startswith(v) for v in val) if l else False
 }
 
 def _merge_avg(d1,d2):
@@ -90,19 +117,33 @@ merge_operator_map = {
     "distinct":lambda d1,d2: d1 + d2
 }
 
+def get_npfunc(dtype,operator):
+    if is_number_type(dtype):
+        try:
+            return number_npoperator_map[operator]
+        except KeyError as ex:
+            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+    elif is_string_type(dtype):
+        try:
+            return string_npoperator_map[operator]
+        except KeyError as ex:
+            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+    else:
+        raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+
 def get_func(dtype,operator):
     if is_number_type(dtype):
         try:
             return number_operator_map[operator]
         except KeyError as ex:
-            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+            raise Exception("Operator({}) is not supported for type({})".format(operator,dtype))
     elif is_string_type(dtype):
         try:
             return string_operator_map[operator]
         except KeyError as ex:
-            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+            raise Exception("Operator({}) is not supported for type({})".format(operator,dtype))
     else:
-        raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        raise Exception("Operator({}) is not supported for type({})".format(operator,dtype))
 
 
 def get_merge_func(operator):

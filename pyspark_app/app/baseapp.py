@@ -43,6 +43,20 @@ COMPUTEDCOLUMN_TRANSFORMER = 2
 COMPUTEDCOLUMN_COLUMNINFO = 3
 
 
+def rawdatacondition_factory(column_map,rawdataconditions):
+    funcs = []
+    for cond in rawdataconditions:
+        col = ExecutorContext.column_map[cond[0]]
+        funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNID],cond[2]))
+    def _func(row):
+        for func in funcs:
+            if not func[0](row[func[1]],func[2]):
+                return False
+
+        return True
+    return _func
+        
+
 def init_column_parameters(parameters):
     if not parameters:
         return
@@ -1037,13 +1051,14 @@ report_group_by_id = lambda i:2000 + i
 resultset_id = lambda i:3000 + i
 
 class DatasetAppReportExecutor(DatasetColumnConfig):
-    def __init__(self,task_timestamp,reportid,databaseurl,datasetid,datasetinfo,report_conditions,report_group_by,resultset,report_type):
+    def __init__(self,task_timestamp,reportid,databaseurl,datasetid,datasetinfo,report_conditions,report_rawdataconditions,report_group_by,resultset,report_type):
         self.task_timestamp = task_timestamp
         self.reportid = reportid
         self.databaseurl = databaseurl
         self.datasetid = datasetid
         self.datasetinfo = datasetinfo
         self.report_conditions = report_conditions
+        self.report_rawdataconditions = report_rawdataconditions
         self.report_group_by = report_group_by
         self.resultset = resultset
         self.report_type = report_type
@@ -1395,7 +1410,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                             i += 1
                                 #check the conditions
                                 for itemid,col_cond in conds:
-                                    cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
+                                    cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
                             else:
                                 #buffer size is smaller than dataset's size
                                 start_index = 0
@@ -1432,9 +1447,9 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     v_cond_result = cond_result[start_index:end_index]
                                     for itemid,col_cond in conds:
                                         if data_len < buffer_size:
-                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data[:data_len],col_cond[2])
+                                            v_cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data[:data_len],col_cond[2])
                                         else:
-                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
+                                            v_cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
 
                                     start_index += buffer_size
 
@@ -1473,21 +1488,32 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         with self.get_datafilewriter(file=reportfile) as reportwriter:
                             with self.get_datafilereader(datafile,has_header=ExecutorContext.has_header) as datareader:
                                 if ExecutorContext.has_header:
+                                    #data file contains header, return a file without header
                                     header = datareader.header
                                 else:
                                     header = self.data_header or []
                                 
                                 if filtered_rows == dataset_size:
                                     #all data are returned
-                                    #but data file contains header, return a file without header
-                                    if ExecutorContext.has_header:
-                                        reportwriter.writerows(self.report_details(datareader,"__all__"))
-                                        return [(data[0],data[1],data[2],dataset_size,len(header),reportfile)]
+                                    rows = self.report_details(datareader,"__all__")
+                                    report_size = dataset_size
                                 else:
                                     #some datas are choose, return a file containing chosen data without header
                                     report_size = np.count_nonzero(cond_result)
                                     indexes = np.flatnonzero(cond_result)
-                                    reportwriter.writerows(self.report_details(datareader,indexes))
+                                    rows = self.report_details(datareader,indexes)
+
+                                if self.report_rawdataconditions:
+                                    report_size = 0
+                                    f_conds = rawdatacondition_factory(ExecutorContext.column_map,self.report_rawdataconditions)
+                                    for row in rows:
+                                        if not _f_conds(row):
+                                            continue
+                                        report_size += 1
+                                        reportwriter.writerow(row)
+                                    return [(data[0],data[1],data[2],report_size,len(header),reportfile)]
+                                else:
+                                    reportwriter.writerows(rows)
                                     return [(data[0],data[1],data[2],report_size,len(header),reportfile)]
 
                         #all data are returned, and data file has no header, copy the data file to reportfile
@@ -1760,11 +1786,11 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 if item[0] == "*":
                                     report_data.append(result_size)
                                 elif filtered_rows == dataset_size:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
                                 elif read_direct:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
                                 else:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
 
                             if self.report_type == NoneReportType:
                                 result.append(report_data)
@@ -2139,9 +2165,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         if report is None:
             raise Exception("Report({}) doesn't exist.".format(self.reportid))
         if self.periodic_report:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditoins,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
         else:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
 
         if self.periodic_report:
             if self.report_status is None:
@@ -2422,6 +2448,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.distinct_colname = None
                 self.report_type = NoneReportType
             else:
+                #rawdata conditions doesn't support for statistics report
+                self.report_rawdataconditions = None
                 #add distinct columns to report_group_by
                 if self.distinct_columns:
                     if self.report_group_by is None:
@@ -2452,15 +2480,16 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
             rdd = spark.sparkContext.parallelize(self.datafiles, concurrency)
             #perform the analysis per nginx access log file
-            logger.debug("Begin to generate the report({0}),report condition={1},report_group_by={2},report_sort_by={3},resultset={4},report_type={5}".format(
+            logger.debug("Begin to generate the report({0}),report condition={1},report rawdataconditions={2},report_group_by={3},report_sort_by={4},resultset={5},report_type={6}".format(
                 self.reportid,
                 self.report_conditions,
+                self.report_rawdataconditions,
                 self.report_group_by,
                 self.report_sort_by,
                 self.resultset,
                 self.report_type.NAME
             ))
-            rdd = rdd.flatMap(DatasetAppReportExecutor(self.task_timestamp,self.reportid,self.databaseurl,self.datasetid,self.datasetinfo,self.report_conditions,self.report_group_by,self.resultset,self.report_type).run)
+            rdd = rdd.flatMap(DatasetAppReportExecutor(self.task_timestamp,self.reportid,self.databaseurl,self.datasetid,self.datasetinfo,self.report_conditions,self.report_rawdataconditions,self.report_rawdataconditions,self.report_group_by,self.resultset,self.report_type).run)
     
             #init the folder to place the report file
             report_cache_dir = os.path.join(self.cachefolder,"report")

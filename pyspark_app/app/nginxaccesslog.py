@@ -898,7 +898,7 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                     ds.read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
                                 #check the conditions
                                 for itemid,col_cond in conds:
-                                    cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
+                                    cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
                             else:
                                 #buffer size is smaller than dataset's size
                                 start_index = 0
@@ -935,9 +935,9 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                     v_cond_result = cond_result[start_index:end_index]
                                     for itemid,col_cond in conds:
                                         if data_len < buffer_size:
-                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data[:data_len],col_cond[2])
+                                            v_cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data[:data_len],col_cond[2])
                                         else:
-                                            v_cond_result &= operation.get_func(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
+                                            v_cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
 
                                     start_index += buffer_size
 
@@ -1261,11 +1261,11 @@ def analysis_factory(task_timestamp,reportid,databaseurl,datasetid,datasetinfo,r
                                 if item[0] == "*":
                                     report_data.append(result_size)
                                 elif filtered_rows == dataset_size:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
                                 elif read_direct:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
                                 else:
-                                    report_data.append(operation.get_func(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
 
                             if report_type == DAILY_REPORT:
                                 #return a dict to perform the function 'reducebykey'
