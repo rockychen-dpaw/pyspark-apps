@@ -16,6 +16,7 @@ from pyspark_app import harvester
 from pyspark_app import database
 from pyspark_app.utils import timezone
 from pyspark_app.utils.filelock import FileLock,AlreadyLocked
+from pyspark_app.datatransformer import is_int_type,is_float_type,is_string_type
 
 from pyspark_app import utils
 from pyspark_app import datatransformer
@@ -27,15 +28,16 @@ from pyspark_app.app.base import get_spark_session
 logger = logging.getLogger("pyspark_app.app.baseapp")
 
 EXECUTOR_COLUMNID=0
-EXECUTOR_COLUMNNAME=1
-EXECUTOR_DTYPE=2
-EXECUTOR_TRANSFORMER=3
-EXECUTOR_COLUMNINFO=4
-EXECUTOR_STATISTICAL=5
-EXECUTOR_FILTERABLE=6
-EXECUTOR_GROUPABLE=7
-EXECUTOR_DISTINCTABLE=8
-EXECUTOR_REFRESH_REQUESTED=9
+EXECUTOR_COLUMNINDEX=1
+EXECUTOR_COLUMNNAME=2
+EXECUTOR_DTYPE=3
+EXECUTOR_TRANSFORMER=4
+EXECUTOR_COLUMNINFO=5
+EXECUTOR_STATISTICAL=6
+EXECUTOR_FILTERABLE=7
+EXECUTOR_GROUPABLE=8
+EXECUTOR_DISTINCTABLE=9
+EXECUTOR_REFRESH_REQUESTED=10
 
 COMPUTEDCOLUMN_COLUMNID = 0
 COMPUTEDCOLUMN_COLUMNINDEX = 1
@@ -47,11 +49,15 @@ def rawdatacondition_factory(column_map,rawdataconditions):
     funcs = []
     for cond in rawdataconditions:
         col = ExecutorContext.column_map[cond[0]]
-        funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNID],cond[2]))
+        if is_int_type(col[EXECUTOR_DTYPE]):
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:int(row[col[EXECUTOR_COLUMNINDEX]]),cond[2]))
+        elif is_float_type(col[EXECUTOR_DTYPE]):
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:float(row[col[EXECUTOR_COLUMNINDEX]]),cond[2]))
+        else:
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:row[col[EXECUTOR_COLUMNINDEX]],cond[2]))
     def _func(row):
         for func in funcs:
-            logger.error("row={}, index={} ,params={}".format(row,func[1],func[2]))
-            if not func[0](row[func[1]],func[2]):
+            if not func[0](func[1](row),func[2]):
                 return False
 
         return True
@@ -1120,7 +1126,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
 
                                     self.computed_column_map[d[2]] = (d[1],d[0],d[4],d[5])
                                 else:
-                                    ExecutorContext.column_map[d[2]] = (d[1],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9],d[10])
+                                    ExecutorContext.column_map[d[2]] = (d[1],d[0],d[2],d[3],d[4],d[5],d[6],d[7],d[8],d[9],d[10])
 
                 for column_config in ExecutorContext.column_map.values():
                     if column_config[EXECUTOR_COLUMNINFO].get("include") or column_config[EXECUTOR_COLUMNINFO].get("exclude"):
