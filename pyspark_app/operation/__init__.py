@@ -81,7 +81,7 @@ string_operator_map = {
     "=":lambda l,val:l == val,
     "!=":lambda l,val:l != val,
     "<>":lambda l,val:l != val,
-    "in":lambda l,vals: l in vals,
+    "in":lambda l,vals: l in vals if l else False,
     "contain":lambda l,val:val in l if l else False,
     "not contain":lambda l,val: val not in l if l else True,
     "endswith":lambda l,val: l.endswith(val) if l else False,
