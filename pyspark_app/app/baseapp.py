@@ -57,6 +57,7 @@ def rawdatacondition_factory(column_map,rawdataconditions):
             funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:row[col[EXECUTOR_COLUMNINDEX]],cond[2]))
     def _func(row):
         for func in funcs:
+            logger.error("{}({},{})".format(func[0],func[1](row),func[2]))
             if not func[0](func[1](row),func[2]):
                 return False
 
