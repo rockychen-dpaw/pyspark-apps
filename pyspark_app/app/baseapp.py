@@ -2489,7 +2489,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.resultset,
                 self.report_type.NAME
             ))
-            rdd = rdd.flatMap(DatasetAppReportExecutor(self.task_timestamp,self.reportid,self.databaseurl,self.datasetid,self.datasetinfo,self.report_conditions,self.report_rawdataconditions,self.report_rawdataconditions,self.report_group_by,self.resultset,self.report_type).run)
+            rdd = rdd.flatMap(DatasetAppReportExecutor(self.task_timestamp,self.reportid,self.databaseurl,self.datasetid,self.datasetinfo,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.resultset,self.report_type).run)
     
             #init the folder to place the report file
             report_cache_dir = os.path.join(self.cachefolder,"report")
