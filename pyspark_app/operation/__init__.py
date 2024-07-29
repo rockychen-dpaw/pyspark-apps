@@ -64,7 +64,7 @@ agg_operator_map = {
 }
 
 number_operator_map = {
-    "==":lambda l == val,
+    "==":lambda l,val: l == val,
     "=":lambda l,val:l == val,
     "!=":lambda l,val: l != val,
     "<>":lambda l,val: l != val,
