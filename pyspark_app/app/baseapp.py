@@ -1507,7 +1507,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     report_size = 0
                                     f_conds = rawdatacondition_factory(ExecutorContext.column_map,self.report_rawdataconditions)
                                     for row in rows:
-                                        if not _f_conds(row):
+                                        if not f_conds(row):
                                             continue
                                         report_size += 1
                                         reportwriter.writerow(row)
