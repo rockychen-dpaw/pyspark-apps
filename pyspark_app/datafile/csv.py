@@ -126,7 +126,7 @@ class CSVWriter(object):
             raise Exception("File({}) was already closed".format(self.file))
         if row is None:
             return
-        self.writer.writerrow(row)
+        self.writer.writerow(row)
 
     def close(self):
         try:
