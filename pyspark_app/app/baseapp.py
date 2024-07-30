@@ -10,6 +10,9 @@ import base64
 import shutil
 from datetime import datetime,timedelta
 import csv 
+import urllib.parse
+import types
+
 
 from pyspark_app import settings
 from pyspark_app import harvester
@@ -107,6 +110,7 @@ class ExecutorContext(object):
 
     resource_harvester = None
     allreportcolumns = None
+    reportcolumns_normalize = None
     has_datafilter = False
     has_header = False
     datafile_is_srcfile = True
@@ -137,6 +141,7 @@ class ExecutorContext(object):
 
             cls.resource_harvester = None
             cls.allreportcolumns = False
+            cls.reportcolumns_normalize = None
             cls.has_datafilter = False
             cls.has_header = False
             cls.datafile_is_srcfile = True
@@ -563,6 +568,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
 
                 #load the dataset column settings, a map between columnindex and a tuple(includes and excludes,(id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn))
                 ExecutorContext.allreportcolumns = {}
+                ExecutorContext.reportcolumns_normalize = {}
                 with database.Database(self.databaseurl).get_conn(True) as conn:
                     with conn.cursor() as cursor:
                         #load dataset columns
@@ -590,6 +596,18 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                     columns[0] = self.filter_factory(columns[0][0],columns[0][1])
                                 if d[0] == -1:
                                     #the end flag
+                                    #init the reportcolumns_normalize 
+                                    if ExecutorContext.reportcolumns_normalize:
+                                        for k in ExecutorContext.reportcolumns_normalize.keys():
+                                            code = ExecutorContext.reportcolumns_normalize[k]
+                                            if code.startswith("lambda"):
+                                                ExecutorContext.reportcolumns_normalize[k] = eval(code)
+                                            else:
+                                                codemodule = types.ModuleType("ColumnNormalize{}".format(k))
+                                                exec(code, codemodule.__dict__)
+                                                if not hasattr(codemodule,"normalize"):
+                                                    raise Exception("The normalize module for column({}) dones not include the method 'normalize'".format(k))
+                                                ExecutorContext.reportcolumns_normalize[k] = getattr(codemodule,"normalize")
                                     break
         
                                 previous_columnindex = d[0]
@@ -620,6 +638,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                         else:
                                             columns[0][1] = d[5].get("exclude")
                                         ExecutorContext.has_datafilter = True
+                            if d[5].get("normalize"):
+                                d[5]["normalize"] = d[5]["normalize"].strip()
+                                if d[5]["normalize"]:
+                                    ExecutorContext.reportcolumns_normalize[d[0]] = d[5]["normalize"]
 
                 self._computed_columns = None
                 if self.computed_columns or ExecutorContext.has_datafilter:
@@ -815,6 +837,10 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 try:
                                     with self.get_srcdatafilereader(src_datafile) as datafilereader:
                                         for item in datafilereader.rows:
+                                            #normalize the data
+                                            if ExecutorContext.reportcolumns_normalize:
+                                                for k,f in ExecutorContext.reportcolumns_normalize.items():
+                                                    item[k] = f(item[k])
                                             #fill the computed row
                                             if self.computed_columns:
                                                 #expand the row first
