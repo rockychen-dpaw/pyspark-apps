@@ -38,7 +38,7 @@ def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None
     return _func(f,val,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
 
 def is_enum_func(f_name): 
-    return f_name in ["str2enum","number2group","str2group","domain2enum","ip2city","ip2country"]
+    return f_name in ["str2enum","number2group","str2group","domain2enum","ip2city","ip2country","resourcekey"]
 
 def is_group_func(f_name): 
     return f_name in ["number2group","str2group"]

@@ -479,9 +479,96 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
                     conn.commit()
                     enum_dicts[columnid][unrecoginized] = 0
                     return 0 if return_id else unrecoginized
-        
+ 
+_domain_configs = {}
+NONE_FUNC = lambda domain,path,queryparameters:None
+def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=None,record=None,path_index=None,queryparameters_index=None,configs=None):
+    if not configs or not path_index or not queryparameters_index:
+        raise Exception("Some of the parameters('configs','path_index','queryparameters_index') are missing")
+   
+    path = record[path_index] or "/" 
+    queryparameters = record[queryparameters_index] or ""
+    try:
+        func = _domain_configs[domain]
+    except KeyError as ex:
+        func = None
+        for k,v in configs.items():
+            if callable(k):
+                if k(domain):
+                    func = v
+                    break
+            elif k == domain:
+                func = v
+                break
+        if func is None:
+            func = NONE_FUNC
 
+        _domain_configs[domain] = func
 
+    key = func(domain,path,queryparameters)
+    if not key:
+        key = ""
+    elif isinstance(key,int):
+        key = str(key)
+    #try to get the value from cache
+    if columnid not in enum_dicts:
+        enum_dicts[columnid] = {}
+        with database.Database(databaseurl).get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("select key,value from datascience_datasetenum where column_id = {}".format(columnid))
+                for row in cursor.fetchall():
+                    enum_dicts[columnid][row[0]] = row[1]
+
+        if key in enum_dicts[columnid]:
+            return enum_dicts[columnid][key]
+
+    elif key in enum_dicts[columnid]:
+        return enum_dicts[columnid][key]
+
+    sql = None
+    with database.Database(databaseurl).get_conn() as conn:
+        with conn.cursor() as cursor:
+            if key == "":
+                sql = """
+INSERT INTO datascience_datasetenum 
+(column_id,key,value,info) 
+VALUES 
+({0},'', 0,'{{}}')
+ON CONFLICT (column_id,value) DO UPDATE 
+SET key=''
+""".format(columnid)
+                cursor.execute(sql)
+                conn.commit()
+                enum_dicts[''] = 0
+                return 0
+            dbkey = key.replace("'","''") 
+            sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
+            cursor.execute(sql)
+            data = cursor.fetchone()
+            if data:
+                enum_dicts[columnid][key] = data[0]
+                return data[0]
+
+            sql = "update datascience_datasetcolumn set sequence=COALESCE(sequence,0) + 1,modified='{1}' where id = {0} ".format(columnid,timezone.dbtime())
+            cursor.execute(sql)
+            if cursor.rowcount == 0:
+                raise Exception("Dataset Column({}) does not exist".format(columnid))
+            sql = "select sequence from datascience_datasetcolumn where id = {}".format(columnid)
+            cursor.execute(sql)
+            try:
+                sequence = cursor.fetchone()[0]
+                sql = "insert into datascience_datasetenum (column_id,key,value,info) values ({},'{}',{},'{{}}')".format(columnid,dbkey,sequence)
+                cursor.execute(sql)
+                conn.commit()
+            except:
+                #should already exist, if database is accessable
+                conn.rollback()
+                sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
+                cursor.execute(sql)
+                sequence = cursor.fetchone()[0]
+    
+            enum_dicts[columnid][key] = sequence
+            return sequence
 
 def get_enum(key,databaseurl=None,columnid=None):
     if not columnid:
@@ -545,4 +632,4 @@ def clean():
 
 
 
-transformers = [str2enum,domain2enum,number2group,str2group,ip2city,ip2country]
+transformers = [str2enum,domain2enum,number2group,str2group,ip2city,ip2country,resourcekey]

@@ -67,14 +67,59 @@ def rawdatacondition_factory(column_map,rawdataconditions):
     return _func
         
 
-def init_column_parameters(parameters):
+exec_re = re.compile("\\ndef[\\t ]+__exec__\\(")
+filter_re = re.compile("\\ndef[\\t ]+__filter__\\(")
+def init_columnmethod_parameters(column,parameters,method="Transform"):
     if not parameters:
         return
-    for k,v in parameters.items():
+    for k in parameters.keys():
+        v= parameters[k]
         if isinstance(v,str) and v.startswith("lambda"):
             parameters[k] = eval(v)
+        elif isinstance(v,dict):
+            init_parameter_map(column,method,k,v)
         elif "pattern" in k:
             parameters[k] = re.compile(v)
+        elif isinstance(v,str) and exec_re.search(v):
+            codemodule = types.ModuleType("Column{}{}Param{}".format(column,method,k))
+            exec(v, codemodule.__dict__)
+            if not hasattr(codemodule,"exec"):
+                parameters[k] = getattr(codemodule,"exec")
+
+def init_parameter_map(column,method,parameter,configs):
+    func_keys = None
+    keyid = 0
+    for k in configs.keys():
+        v = configs[k]
+        if isinstance(v,str) and v.startswith("lambda"):
+            configs[k] = eval(v)
+        elif exec_re.search(v):
+            codemodule = types.ModuleType("Column{}{}Param{}Key{}Exec".format(column,method,parameter,keyid))
+            exec(v, codemodule.__dict__)
+            if hasattr(codemodule,"__exec__"):
+                configs[k] = getattr(codemodule,"__exec__")
+
+        func_key = None
+        if isinstance(k,str) and k.startswith("lambda"):
+            func_key = eval(k)
+        elif filter_re.search(k):
+            codemodule = types.ModuleType("Column{}{}Param{}Key{}Filter".format(column,method,parameter,keyid))
+            exec(k, codemodule.__dict__)
+            if hasattr(codemodule,"__filter__"):
+                func_key = getattr(codemodule,"__filter__")
+
+        if func_key:
+            if func_keys:
+                func_keys.append((k,func_key))
+            else:
+                func_keys = [(k,func_key)]
+
+        keyid += 1
+
+    if func_keys:
+        for k,func_key in func_keys:
+            configs[func_key] = configs[k]
+            del configs[k]
 
 class NoneReportType(object):
     ID = None
@@ -578,7 +623,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                         for d in itertools.chain(cursor.fetchall(),[[-1]]):
                             #init column parameters
                             if d[0] != -1 :
-                                init_column_parameters(d[5].get("parameters"))
+                                init_columnmethod_parameters(d[2],d[5].get("parameters"))
 
                             if d[0] != -1 and d[11]:
                                 #computed column
@@ -1142,7 +1187,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             cursor.execute("select columnindex,id,name,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable,refresh_requested,computed from datascience_datasetcolumn where dataset_id = {} order by columnindex".format(self.datasetid))
                             for d in cursor.fetchall():
                                 #init column parameters
-                                init_column_parameters(d[5].get("parameters"))
+                                init_columnmethod_parameters(d[2],d[5].get("parameters"))
 
                                 if d[11]:
                                     if d[5].get("parameters"):
@@ -1914,7 +1959,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
         cursor.execute("select name,id,dtype,transformer,columninfo,statistical,filterable,groupable,distinctable from datascience_datasetcolumn where dataset_id = {} and not computed ".format(self.datasetid))
         for row in cursor.fetchall():
              #init column parameters
-             init_column_parameters(row[4].get("parameters"))
+             init_columnmethod_parameters(row[0],row[4].get("parameters"))
 
              self.column_map[row[0]] = [row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8]]
     
