@@ -36,7 +36,7 @@ class CSVReader(object):
     def open(self):
         if self.file_input is None:
             self.file_input = open(self.file)
-            self.reader = csv.reader(self.file_input)
+            self.reader = csv.reader(self.file_input,escapechar='\\')
 
     @property 
     def records(self):
@@ -110,7 +110,7 @@ class CSVWriter(object):
         self.file = file
         self.file_output = file_output
         self.header = header
-        self.writer = csv.writer(self.file_output)
+        self.writer = csv.writer(self.file_output,escapechar='\\')
         if self.header:
             self.writer.writerow(self.header)
 
