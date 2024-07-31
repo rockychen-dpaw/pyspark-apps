@@ -1864,11 +1864,11 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 if item[0] == "*":
                                     report_data.append(result_size)
                                 elif filtered_rows == dataset_size:
-                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[EXECUTOR_DTYPE],item[1])(column_data[:data_len]))
                                 elif read_direct:
-                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
+                                    report_data.append(operation.get_npfunc(col[EXECUTOR_DTYPE],item[1])(column_data[:data_len][cond_result[start_index:end_index]]))
                                 else:
-                                    report_data.append(operation.get_npfunc(col[2],item[1])(column_data[:data_len]))
+                                    report_data.append(operation.get_npfunc(col[EXECUTOR_DTYPE],item[1])(column_data[:data_len]))
 
                             if self.report_type == NoneReportType:
                                 result.append(report_data)
