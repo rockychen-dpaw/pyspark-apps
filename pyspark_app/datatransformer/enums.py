@@ -46,8 +46,8 @@ def str2enum(key,databaseurl=None,columnid=None,columnname=None,context=None,rec
         #key is invalid
         if default is not None:
             #a default value is configured,use the default value
-            if default in enum_dicts:
-                return enum_dicts[default]
+            if default in enum_dicts[columnid]:
+                return enum_dicts[columnid][default]
             else:
                 valid_key = False
         elif context["phase"] == "Download":
@@ -97,7 +97,7 @@ SET key='{1}'
 """.format(columnid,default)
                 cursor.execute(sql)
                 conn.commit()
-                enum_dicts[default] = 0
+                enum_dicts[columnid][default] = 0
                 return 0
 
             dbkey = key.replace("'","''") 
@@ -482,7 +482,7 @@ def ip2country(ip,databaseurl=None,columnid=None,pattern=None,default=None,colum
  
 _domain_configs = {}
 NONE_FUNC = lambda domain,path,queryparameters:None
-def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=None,record=None,path_index=None,queryparameters_index=None,configs=None):
+def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=None,record=None,path_index=None,queryparameters_index=None,configs=None,default="null"):
     if not configs or not path_index or not queryparameters_index:
         raise Exception("Some of the parameters('configs','path_index','queryparameters_index') are missing")
    
@@ -507,7 +507,7 @@ def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=No
 
     key = func(domain,path,queryparameters)
     if not key:
-        key = ""
+        key = default
     elif isinstance(key,int):
         key = str(key)
     #try to get the value from cache
@@ -528,18 +528,18 @@ def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=No
     sql = None
     with database.Database(databaseurl).get_conn() as conn:
         with conn.cursor() as cursor:
-            if key == "":
+            if key == default:
                 sql = """
 INSERT INTO datascience_datasetenum 
 (column_id,key,value,info) 
 VALUES 
-({0},'', 0,'{{}}')
+({0},'{1}', 0,'{{}}')
 ON CONFLICT (column_id,value) DO UPDATE 
-SET key=''
-""".format(columnid)
+SET key='{1}'
+""".format(columnid,default)
                 cursor.execute(sql)
                 conn.commit()
-                enum_dicts[''] = 0
+                enum_dicts[columnid][default] = 0
                 return 0
             dbkey = key.replace("'","''") 
             sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
