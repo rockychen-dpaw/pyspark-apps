@@ -2243,7 +2243,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         if report is None:
             raise Exception("Report({}) doesn't exist.".format(self.reportid))
         if self.periodic_report:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditoins,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
         else:
             self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
 
