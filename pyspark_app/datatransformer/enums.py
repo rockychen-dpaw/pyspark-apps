@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 import json
 import os
 import traceback
@@ -486,8 +487,8 @@ def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=No
     if not configs or not path_index or not queryparameters_index:
         raise Exception("Some of the parameters('configs','path_index','queryparameters_index') are missing")
    
-    path = record[path_index] or "/" 
-    queryparameters = record[queryparameters_index] or ""
+    path = urllib.parse.unquote(record[path_index] or "/")
+    queryparameters = urllib.parse.unquote(record[queryparameters_index] or "")
     try:
         func = _domain_configs[domain]
     except KeyError as ex:
