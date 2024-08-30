@@ -52,8 +52,8 @@ class TimeBasedDatasetAppDownloadDriver(DatasetAppDownloadDriver):
             self.datafiles.append((timezone.format(interval[0]),timezone.format(interval[1]),self.get_datafilename(interval[0],interval[1])))
 
 class TimeBasedDatasetAppReportDriver(DatasetAppReportDriver):
-    ADHOC_REPORT_SQL = "select name,dataset_id,\"start\",\"end\",rtype,conditions,rawdataconditions,\"group_by\",\"sort_by\",resultset,status from datascience_report where id = {}"
-    PERIODIC_REPORT_SQL = "select b.name,b.dataset_id,a.interval_start as start,a.interval_end as end,b.rtype,b.conditions,b.rawdataconditions,b.\"group_by\" as \"group_by\",b.\"sort_by\" as \"sort_by\",b.resultset,a.status,b.interval,b.id as periodic_reportid from datascience_periodicreportinstance a join datascience_periodicreport b on a.report_id = b.id where a.id = {}"
+    ADHOC_REPORT_SQL = "select name,dataset_id,\"start\",\"end\",rtype,conditions,rawdataconditions,resultfilter,\"group_by\",\"sort_by\",resultset,status from datascience_report where id = {}"
+    PERIODIC_REPORT_SQL = "select b.name,b.dataset_id,a.interval_start as start,a.interval_end as end,b.rtype,b.conditions,b.rawdataconditions,b.resultfilter,b.\"group_by\" as \"group_by\",b.\"sort_by\" as \"sort_by\",b.resultset,a.status,b.interval,b.id as periodic_reportid from datascience_periodicreportinstance a join datascience_periodicreport b on a.report_id = b.id where a.id = {}"
 
     def find_datafiles(self):
         self.datafiles = []

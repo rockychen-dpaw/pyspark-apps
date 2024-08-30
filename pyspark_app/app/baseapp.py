@@ -2209,14 +2209,32 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
             report_result: a iterator of tuple(keys, values)
             enum_colids: a list with len(report_group_by) or len(keys), the corresponding memeber is column id if the related column need to convert into keys; otherwise the 
         """
-        if enum_colids:
-            #converting the enum id to enum key is required
+        if self.report_resultfilter:
             for k,v in report_result:
-                yield itertools.chain(self._group_by_data_iterator(self._group_by_key_iterator(k),enum_colids),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
+                passed = True
+                for f in self.report_resultfilter:
+                    if f[3](v[f[0]],f[2]):
+                        continue
+                    else:
+                        passed = False
+                        break
+                if not passed:
+                    #filter out by resultfilter
+                    continue
+                if enum_colids:
+                    #converting the enum id to enum key is required
+                    yield itertools.chain(self._group_by_data_iterator(self._group_by_key_iterator(k),enum_colids),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
+                else:
+                    #converting the enum id to enum key is not required
+                    yield itertools.chain(self._group_by_key_iterator(k),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
         else:
-            #converting the enum id to enum key is not required
             for k,v in report_result:
-                yield itertools.chain(self._group_by_key_iterator(k),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
+                if enum_colids
+                    #converting the enum id to enum key is required
+                    yield itertools.chain(self._group_by_data_iterator(self._group_by_key_iterator(k),enum_colids),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
+                else:
+                    #converting the enum id to enum key is not required
+                    yield itertools.chain(self._group_by_key_iterator(k),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
 
     @staticmethod
     def resultset_iterator(report_result,original_resultset):
@@ -2226,8 +2244,22 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
             report_result: a iterator of tuple(keys, values)
         """
         #converting the enum id to enum key is not required
-        for v in report_result:
-            yield DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset)
+        if self.report_resultfilter:
+            for v in report_result:
+                passed = True
+                for f in self.report_resultfilter:
+                    if f[3](v[f[0]],f[2]):
+                        continue
+                    else:
+                        passed = False
+                        break
+                if not passed:
+                    #filter out by resultfilter
+                    continue
+                yield DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset)
+        else:
+            for v in report_result:
+                yield DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset)
 
     def load_env(self):
         self.reportid =  os.environ.get("REPORTID")
@@ -2243,9 +2275,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         if report is None:
             raise Exception("Report({}) doesn't exist.".format(self.reportid))
         if self.periodic_report:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_resultfilter,self.report_group_by,self.report_sort_by,self.resultset,self.report_status,self.report_interval,self.periodic_reportid = report
         else:
-            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
+            self.report_name,self.datasetid,self.starttime,self.endtime,self.report_type,self.report_conditions,self.report_rawdataconditions,self.report_resultfilter,self.report_group_by,self.report_sort_by,self.resultset,self.report_status = report
 
         if self.periodic_report:
             if self.report_status is None:
@@ -2447,6 +2479,23 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 #add the distinct column to original_resultset
                 if self.distinct_columns:
                     original_resultset.insert(0,[self.distinct_columns[0][0],"distinct",self.distinct_colname])
+
+                #replace the filter name with the index in the resultset; if can't find, remove the filter
+                #add the func to the filter
+                if self.report_resultfilter:
+                    for j in range(len(self.report_resultfilter) - 1,-1,-1):
+                        pos = -1
+                        for index in range(len(original_resultset)):
+                            if original_resultset[index][2] == (self.distinct_colname if self.report_resultfilter[j][0] == "distinct" else self.report_resultfilter[j][0]):
+                                pos = index
+                                break
+                        if pos >= 0:
+                            self.report_resultfilter[j][0] = pos
+                            self.report_resultfilter[j].append(operation.get_func(datatransformer.INT64,self.report_resultfilter[j][1]))
+                        else:
+                            #can't find the column of the filter in result set
+                            del self.report_resultfilter[j]
+
                 self.resultset.sort()
                 for i in range(len(self.resultset) - 1,-1,-1):
                     item = self.resultset[i]
@@ -2524,6 +2573,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.report_sort_by = None
                 self.distinct_columns = None
                 self.distinct_colname = None
+                self.resultfilter = None
                 self.report_type = NoneReportType
                 if self.report_rawdataconditions:
                     for cond in self.report_rawdataconditions:
@@ -2846,6 +2896,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 elif self.report_type != NoneReportType:
                     #sort by request_time
                     report_result.sort(key=lambda d:d[0])
+
 
                 #save the report raw data to file and also convert the enumeration data back to string
                 with open(reportfile_raw, 'w', newline='') as f:
