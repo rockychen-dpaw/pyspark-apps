@@ -2229,7 +2229,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     yield itertools.chain(self._group_by_key_iterator(k),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
         else:
             for k,v in report_result:
-                if enum_colids
+                if enum_colids:
                     #converting the enum id to enum key is required
                     yield itertools.chain(self._group_by_data_iterator(self._group_by_key_iterator(k),enum_colids),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
                 else:
@@ -2482,6 +2482,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
                 #replace the filter name with the index in the resultset; if can't find, remove the filter
                 #add the func to the filter
+                #parse the operators
                 if self.report_resultfilter:
                     for j in range(len(self.report_resultfilter) - 1,-1,-1):
                         pos = -1
@@ -2491,6 +2492,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                 break
                         if pos >= 0:
                             self.report_resultfilter[j][0] = pos
+                            self.report_resultfilter[j][2] = json.loads(self.report_resultfilter[j][2])
                             self.report_resultfilter[j].append(operation.get_func(datatransformer.INT64,self.report_resultfilter[j][1]))
                         else:
                             #can't find the column of the filter in result set

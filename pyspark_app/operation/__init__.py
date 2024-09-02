@@ -73,7 +73,7 @@ number_operator_map = {
     ">=":lambda l,val: l >= val,
     "<":lambda l,val:l < val,
     "<=":lambda l,val:l <= val,
-    "between":lambda l,val:l >= val[0] & l < val[1],
+    "between":lambda l,val:l >= val[0] and l < val[1],
     "in":lambda l,vals: l in vals
 }
 
