@@ -365,9 +365,21 @@ class DatasetConfig(object):
         except:
             return False
 
+    _header_formaters = {}
+    _headers = None
     def get_data_header(self,datasetinfo):
+        if self._headers:
+            return self._headers
+
         try:
-            return datasetinfo["datafile"].get("header")
+            headers = datasetinfo["datafile"].get("header")
+            if not headers:
+                return None
+            for h in headers:
+                if isinstance(h,(list,tuple)) and len(h) >= 2 and h[1]:
+                    self._header_formaters[h[0]] = h[1]
+            self._headers = [(h[0] if isinstance(h,(list,tuple)) else h ) for h in headers]
+            return self._headers
         except:
             return None
 
@@ -379,7 +391,14 @@ class DatasetConfig(object):
     def data_header(self,header):
         self._src_data_header = None
         self._computed_columns = None
-        self.datasetinfo["datafile"]["header"] = header
+        headers = []
+        for h in header:
+            if self._header_formaters.get(h):
+                headers.append([h,self._header_formaters.get(h)])
+            else:
+                headers.append(h)
+        self.datasetinfo["datafile"]["header"] = headers
+        self._headers = header
 
     def get_src_data_header(self,datasetinfo):
         data_header = self.get_data_header(datasetinfo)
@@ -401,8 +420,9 @@ class DatasetConfig(object):
 
     @src_data_header.setter
     def src_data_header(self,header):
+        self._src_data_header = header
         if self.computed_columns:
-            self._src_data_header = list(header)
+            headers = list(header)
             for column,override,column_config in self.computed_columns.items():
                 if override:
                     #this computed column only overrides the column value
@@ -410,9 +430,16 @@ class DatasetConfig(object):
                 #the computed column is a new column
                 header.insert(column_config[0],column)
         else:
-            self._src_data_header = header
+            headers = header
 
-        self.datasetinfo["datafile"]["header"] = header
+        self._headers = list(headers)
+        #add the formater to headers
+        for i in range(len(headers)):
+            h = headers[i]
+            if self._header_formaters.get(h):
+                headers[i] = [h,self._header_formaters.get(h)]
+
+        self.datasetinfo["datafile"]["header"] = headers
 
     _computed_columns = None
     @property
@@ -2726,7 +2753,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         for r in result:
                             utils.remove_file(r[5])
 
-                logger.debug("report file = {}".format(reportfile))
+                logger.debug("report file = {} , report header file = {}".format(reportfile,report_header_file))
                 self.report_populate_status["status"] = "Succeed"
                 if report_header_file:
                     self.report_populate_status["report_header"] = True
