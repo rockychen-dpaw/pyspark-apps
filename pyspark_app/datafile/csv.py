@@ -28,7 +28,6 @@ def writer(filetype_kwargs=None,file=None,**kwargs):
             return CSVWriter(output.name,output,header=header)
 
 def reader(file,filetype_kwargs=None,has_header=True,header=None):
-    return CSVReader(file,has_header,**filetype_kwargs)
     if filetype_kwargs:
         return CSVReader(file,has_header,**filetype_kwargs)
     else:
