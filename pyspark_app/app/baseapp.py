@@ -1083,22 +1083,22 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 else:
                                                     if datatransformer.is_int_type(column_dtype):
                                                         try:
-                                                            value = int(value.strip()) if value else 0
+                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = int(value.strip()) if value else 0
                                                         except:
-                                                            value = 0
+                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = 0
                                                     elif datatransformer.is_float_type(column_dtype):
                                                         try:
-                                                            value = float(value.strip()) if value else 0
+                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = float(value.strip()) if value else 0
                                                         except:
-                                                            value = 0
+                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = 0
                                                     else:
                                                         #remove non printable characters
-                                                        value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                        v = value.encode("ascii",errors="ignore").decode().strip() if value else ""
                                                         #value is too long,cut to the column size
-                                                        if len(value) >= column_size:
-                                                            value = value[0:column_size]
+                                                        if len(v) >= column_size:
+                                                            v = v[0:column_size]
     
-                                                    ExecutorContext.indexbuffs[column_name][indexbuff_index] = value
+                                                        ExecutorContext.indexbuffs[column_name][indexbuff_index] = v
                 
                                         except:
                                             raise Exception("Failed to transform the {2}th column({4}) of the row({1}={3}) in dataset({0}).\n{5}".format(data[2],row_index,columnindex,str(item),value,traceback.format_exc()))

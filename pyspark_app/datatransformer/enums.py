@@ -237,7 +237,9 @@ def number2group(value,databaseurl=None,columnid=None,columnname=None,context=No
         except:
             with database.Database(databaseurl).get_conn() as conn:
                 with conn.cursor() as cursor:
-                    sql = """
+                    sql = None
+                    try:
+                        sql = """
 INSERT INTO datascience_runningissue
     ("phase","category","dstime","dsfile","message","created") 
 VALUES 
@@ -247,14 +249,14 @@ VALUES
                         context['category'], 
                         timezone.dbtime(context.get("dstime")) if context.get("dstime") else 'null', 
                         context.get("dsfile","null"),
-                        "The value({2}) of the column({1}) is not a valid integer.record={0}".format(record,columnname,value),
+                        "The value({2}) of the column({1}) is not a valid integer.record={0}".format(str(record).replace("'","''"),columnname,value),
                         timezone.dbtime()
-                    )
-                    try:
+                        )
                         cursor.execute(sql)
                         conn.commit()
                     except:
                         conn.rollback()
+                        logger.error("Failed to execute sql.{1}\n{0}".format(sql,traceback.format_exc()))
             value = None
 
     if columnid not in enum_dicts:
