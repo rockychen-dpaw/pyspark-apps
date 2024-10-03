@@ -7,7 +7,7 @@ format = 'csv'
 file_ext = ".csv"
 description="Export report data as csv "
 
-def writer(file=None,**kwargs):
+def writer(filetype_kwargs=None,file=None,**kwargs):
     if "header" in kwargs:
         header = kwargs.pop("header")
     else:
@@ -15,28 +15,39 @@ def writer(file=None,**kwargs):
 
     if file:
         #normal file
-        return CSVWriter(file,open(file,'w'),header=header)
+        if filetype_kwargs:
+            return CSVWriter(file,open(file,'w'),header=header,**filetype_kwargs)
+        else:
+            return CSVWriter(file,open(file,'w'),header=header)
     else:
         #tempfile
         output = tempfile.NamedTemporaryFile(mode='w',**kwargs)
-        return CSVWriter(output.name,output,header=header)
+        if filetype_kwargs:
+            return CSVWriter(output.name,output,header=header,**filetype_kwargs)
+        else:
+            return CSVWriter(output.name,output,header=header)
 
-def reader(file,has_header=True,header=None):
-    return CSVReader(file,has_header)
+def reader(file,filetype_kwargs=None,has_header=True,header=None):
+    return CSVReader(file,has_header,**filetype_kwargs)
+    if filetype_kwargs:
+        return CSVReader(file,has_header,**filetype_kwargs)
+    else:
+        return CSVReader(file,has_header)
 
 class CSVReader(object):
     _header = None
-    def __init__(self,file,has_header):
+    def __init__(self,file,has_header,escapechar='"'):
         self.file = file
         self.has_header = has_header
         self.file_input = None
         self.reader = None
+        self.escapechar = escapechar
 
 
     def open(self):
         if self.file_input is None:
             self.file_input = open(self.file)
-            self.reader = csv.reader(self.file_input,escapechar='\\')
+            self.reader = csv.reader(self.file_input,escapechar=self.escapechar)
 
     @property 
     def records(self):
@@ -106,11 +117,12 @@ class CSVReader(object):
         return False if value else True
 
 class CSVWriter(object):
-    def __init__(self,file,file_output,header=None):
+    def __init__(self,file,file_output,header=None,escapechar='"'):
         self.file = file
+        self.escapechar = escapechar
         self.file_output = file_output
         self.header = header
-        self.writer = csv.writer(self.file_output,escapechar='\\')
+        self.writer = csv.writer(self.file_output,escapechar=self.escapechar)
         if self.header:
             self.writer.writerow(self.header)
 

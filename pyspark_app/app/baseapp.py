@@ -335,19 +335,19 @@ class DatasetConfig(object):
 
     def get_datafilewriter(self,**kwargs):
         try:
-            return datafile.writer(self.datasetinfo["datafile"]["filetype"],**kwargs)
+            return datafile.writer(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),**kwargs)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
     def get_srcdatafilereader(self,file):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,header=self.src_data_header,has_header=self.has_src_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),file,header=self.src_data_header,has_header=self.has_src_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
     def get_datafilereader(self,file,has_header):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,header=self.data_header,has_header=has_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),file,header=self.data_header,has_header=has_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 

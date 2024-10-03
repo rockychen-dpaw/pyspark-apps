@@ -13,10 +13,16 @@ def initialize():
 
 initialize()
 
-def writer(filetype,file=None,**kwargs):
-    return filetypes[filetype].writer(file=file,**kwargs)
+def writer(filetype,filetype_kwargs,file=None,**kwargs):
+    if filetype_kwargs:
+        return filetypes[filetype].writer(filetype_kwargs=filetype_kwargs,file=file,**kwargs)
+    else:
+        return filetypes[filetype].writer(file=file,**kwargs)
 
-def reader(filetype,file,header=None,has_header=True):
+def reader(filetype,filetype_kwargs,file,header=None,has_header=True):
     """
     """
-    return filetypes[filetype].reader(file=file,header=header,has_header=has_header)
+    if filetype_kwargs:
+        return filetypes[filetype].reader(filetype_kwargs=filetype_kwargs,file=file,header=header,has_header=has_header)
+    else:
+        return filetypes[filetype].reader(file=file,header=header,has_header=has_header)
