@@ -45,13 +45,7 @@ def str2enum(key,databaseurl=None,columnid=None,columnname=None,context=None,rec
     valid_key = True
     if (values and key not in values) or (is_valid and not is_valid(key) or (pattern and not pattern.search(key))):
         #key is invalid
-        if default is not None:
-            #a default value is configured,use the default value
-            if default in enum_dicts[columnid]:
-                return enum_dicts[columnid][default]
-            else:
-                valid_key = False
-        elif context["phase"] == "Download":
+        if context["phase"] == "Download":
             #can't parse the key, raise exception
             with database.Database(databaseurl).get_conn() as conn:
                 with conn.cursor() as cursor:
@@ -81,6 +75,13 @@ VALUES
                         conn.rollback()
                         raise
                     
+        if default is not None:
+            #a default value is configured,use the default value
+            if default in enum_dicts[columnid]:
+                return enum_dicts[columnid][default]
+            else:
+                valid_key = False
+        else:
             raise Exception("The value({2}) of the column({1}) is invalid,context={0}".format(context,columnname,key))
 
     sql = None
