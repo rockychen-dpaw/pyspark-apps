@@ -226,13 +226,36 @@ SET key='{1}'
         logger.error("Failed to convert domain to enum.columnname={},key={},record={}. {}".format(columnname,key,record,traceback.format_exc()))
         raise
 
-def number2group(value,databaseurl=None,columnid=None,return_id=True):
+def number2group(value,databaseurl=None,columnid=None,columnname=None,context=None,record=None,is_valid=None,values=None,pattern=None,default=None,return_id=True):
     if not columnid:
         raise Exception("Missing column id")
     if not databaseurl:
         raise Exception("Missing database url")
     if isinstance(value,str):
-        value = int(value.strip()) if (value and value.strip()) else None
+        try:
+            value = int(value.strip()) if (value and value.strip()) else None
+        except:
+            with database.Database(databaseurl).get_conn() as conn:
+                with conn.cursor() as cursor:
+                    sql = """
+INSERT INTO datascience_runningissue
+    ("phase","category","dstime","dsfile","message","created") 
+VALUES 
+    ('{0}','{1}', '{2}','{3}','{4}','{5}')
+""".format(
+                        context["phase"],
+                        context['category'], 
+                        timezone.dbtime(context.get("dstime")) if context.get("dstime") else 'null', 
+                        context.get("dsfile","null"),
+                        "The value({2}) of the column({1}) is not a valid integer.record={0}".format(record,columnname,value),
+                        timezone.dbtime()
+                    )
+                    try:
+                        cursor.execute(sql)
+                        conn.commit()
+                    except:
+                        conn.rollback()
+            value = None
 
     if columnid not in enum_dicts:
         enum_dicts[columnid] = []

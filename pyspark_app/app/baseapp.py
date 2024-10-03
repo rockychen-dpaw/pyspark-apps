@@ -1045,85 +1045,59 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 for item in datafilereader.rows:
                                     #generate the dataset for each index column
                                     row_index += 1
-                                    try:
-                                        for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
-                                            try:
-                                                value = valueat(item,columnindex)
-                                                for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_required in reportcolumns[1]:
-                                                    if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
-                                                        #no need to create index 
-                                                        continue
-                                                    if process_required_columns and column_name not in process_required_columns:
-                                                        #this is not the first run, and this column no nedd to process again
-                                                        continue
-        
-                                                    column_size = column_columninfo.get("size",64) if column_columninfo else 64
-                        
-                                                    #create the buffer and hdf5 dataset for column
-                                                    if column_name not in indexdatasets:
-                                                        if column_name in tmp_h5:
-                                                            indexdatasets[column_name] = tmp_h5[column_name]
-                                                        else:
-                                                            indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_size))
-                                                        indexdatasets[column_name].attrs["created"] = created
-        
-                                                    if column_name not in ExecutorContext.indexbuffs:
-                                                        ExecutorContext.indexbuffs[column_name] = np.empty((ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
-                        
-                                                    #get the index data for each index column
-                                                    if column_transformer:
-                                                        #data  transformation is required
-                                                        if column_columninfo and column_columninfo.get("parameters"):
-                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
-                                                        else:
-                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
-                                                    else:
-                                                        if datatransformer.is_int_type(column_dtype):
-                                                            try:
-                                                                value = int(value.strip()) if value else 0
-                                                            except:
-                                                                value = 0
-                                                        elif datatransformer.is_float_type(column_dtype):
-                                                            try:
-                                                                value = float(value.strip()) if value else 0
-                                                            except:
-                                                                value = 0
-                                                        else:
-                                                            #remove non printable characters
-                                                            value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
-                                                            #value is too long,cut to the column size
-                                                            if len(value) >= column_size:
-                                                                value = value[0:column_size]
-        
-                                                        ExecutorContext.indexbuffs[column_name][indexbuff_index] = value
+                                    for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():
+                                        try:
+                                            value = valueat(item,columnindex)
+                                            for column_columnid,column_name,column_dtype,column_transformer,column_columninfo,column_statistical,column_filterable,column_groupable,column_distinctable,column_refresh_required in reportcolumns[1]:
+                                                if  not column_filterable and not column_groupable and not column_distinctable and not column_statistical:
+                                                    #no need to create index 
+                                                    continue
+                                                if process_required_columns and column_name not in process_required_columns:
+                                                    #this is not the first run, and this column no nedd to process again
+                                                    continue
+    
+                                                column_size = column_columninfo.get("size",64) if column_columninfo else 64
                     
-                                            except:
-                                                raise Exception("Failed to transform the {2}th column({4}) of the row({1}={3}) in dataset({0}).\n{5}".format(data[2],row_index,columnindex,str(item),value,traceback.format_exc()))
-                                    except Exception as ex:
-                                        with database.Database(self.databaseurl).get_conn() as conn:
-                                            with conn.cursor() as cursor:
-                                                sql = """
-INSERT INTO datascience_runningissue
-    ("phase","category","dstime","dsfile","message","created") 
-VALUES 
-    ('{0}','{1}', '{2}','{3}','{4}','{5}')
-""".format(
-                                                    "Download",
-                                                    'Transform Column Data', 
-                                                    dataset_time, 
-                                                    data[2],
-                                                    str(ex),
-                                                    timezone.dbtime()
-                                                )
-                                                try:
-                                                    cursor.execute(sql)
-                                                    conn.commit()
-                                                except Exception as ex2:
-                                                    conn.rollback()
-                                                    logger.debug("Failed to write the message({0}) to model 'RunningIssue'.{1}".format(str(ex),str(ex2)))
-                                                    
-                                        continue
-
+                                                #create the buffer and hdf5 dataset for column
+                                                if column_name not in indexdatasets:
+                                                    if column_name in tmp_h5:
+                                                        indexdatasets[column_name] = tmp_h5[column_name]
+                                                    else:
+                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, (dataset_size,),dtype=datatransformer.get_hdf5_type(column_dtype,column_size))
+                                                    indexdatasets[column_name].attrs["created"] = created
+    
+                                                if column_name not in ExecutorContext.indexbuffs:
+                                                    ExecutorContext.indexbuffs[column_name] = np.empty((ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,column_size))
+                    
+                                                #get the index data for each index column
+                                                if column_transformer:
+                                                    #data  transformation is required
+                                                    if column_columninfo and column_columninfo.get("parameters"):
+                                                        ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name,**column_columninfo["parameters"])
+                                                    else:
+                                                        ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
+                                                else:
+                                                    if datatransformer.is_int_type(column_dtype):
+                                                        try:
+                                                            value = int(value.strip()) if value else 0
+                                                        except:
+                                                            value = 0
+                                                    elif datatransformer.is_float_type(column_dtype):
+                                                        try:
+                                                            value = float(value.strip()) if value else 0
+                                                        except:
+                                                            value = 0
+                                                    else:
+                                                        #remove non printable characters
+                                                        value = value.encode("ascii",errors="ignore").decode().strip() if value else ""
+                                                        #value is too long,cut to the column size
+                                                        if len(value) >= column_size:
+                                                            value = value[0:column_size]
+    
+                                                    ExecutorContext.indexbuffs[column_name][indexbuff_index] = value
+                
+                                        except:
+                                            raise Exception("Failed to transform the {2}th column({4}) of the row({1}={3}) in dataset({0}).\n{5}".format(data[2],row_index,columnindex,str(item),value,traceback.format_exc()))
                 
                                     indexbuff_index += 1
                                     if indexbuff_index == ExecutorContext.buffer_size:
