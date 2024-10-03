@@ -61,6 +61,8 @@ class CSVReader(object):
                 if not row:
                     continue
                 lines += 1
+        except Exception as ex:
+            raise Exception("Failed to read csv file({0}). {1}({2})".format(self.file,ex.__class__.__name__,str(ex)))
         finally:
             self.close()
 
