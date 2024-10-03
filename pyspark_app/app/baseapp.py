@@ -1107,7 +1107,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     lock.renew()
 
                                         except:
-                                            raise Exception("Failed to transform the {2}th column({3}) of rows({1}) in dataset({0}).\n{4}".format(data[2],row_index,columnindex,value,traceback.format_exc()))
+                                            raise Exception("Failed to transform the {2}th column({4}) of the row({1}={3}) in dataset({0}).\n{5}".format(data[2],row_index,columnindex,item,value,traceback.format_exc()))
 
                 
                                     indexbuff_index += 1
