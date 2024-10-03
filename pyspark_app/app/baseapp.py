@@ -333,21 +333,25 @@ class DatasetConfig(object):
 
         return self._harvester
 
+    @property
+    def filetype_kwargs(self):
+        return self.datasetinfo["datafile"].get("filetype_kwargs")
+
     def get_datafilewriter(self,**kwargs):
         try:
-            return datafile.writer(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),**kwargs)
+            return datafile.writer(self.datasetinfo["datafile"]["filetype"],filetype_kwargs=self.filetype_kwargs,**kwargs)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
     def get_srcdatafilereader(self,file):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),file,header=self.src_data_header,has_header=self.has_src_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,filetype_kwargs=self.filetype_kwargs,header=self.src_data_header,has_header=self.has_src_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
     def get_datafilereader(self,file,has_header):
         try:
-            return datafile.reader(self.datasetinfo["datafile"]["filetype"],self.datasetinfo["datafile"].get("filetype_kwargs"),file,header=self.data_header,has_header=has_header)
+            return datafile.reader(self.datasetinfo["datafile"]["filetype"],file,filetype_kwargs=self.filetype_kwargs,header=self.data_header,has_header=has_header)
         except KeyError as ex:
             raise Exception("Incomplete configuration 'datafile'.{}".format(str(ex)))
 
@@ -2978,7 +2982,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.report_populate_status["raw_report"] = reportfile_raw
                 self.report_populate_status["report_header"] = True
                 reportfile = reportfile
-                reportsize = datafile.reader("csv",reportfile,has_header=True).records
+                reportsize = datafile.reader("csv",reportfile,filetype_kwargs=self.filetype_kwargs,has_header=True).records
         except ReportAlreadyGenerated as ex:
             #report already generated
             pass
