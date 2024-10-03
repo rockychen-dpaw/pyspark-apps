@@ -2776,10 +2776,10 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                 self.report_populate_status["status"] = "Succeed"
                 if report_header_file:
                     self.report_populate_status["report_header"] = True
-                    reportsize = datafile.reader("csv",reportfile,has_header=True).records
+                    reportsize = datafile.reader("csv",reportfile,has_header=True,filetype_kwargs=self.filetype_kwargs).records
                 else:
                     self.report_populate_status["report_header"] = False
-                    reportsize = datafile.reader("csv",reportfile,has_header=False).records
+                    reportsize = datafile.reader("csv",reportfile,has_header=False,filetype_kwargs=self.filetype_kwargs).records
                 return 
             else:
                 if self.report_type == NoneReportType:
