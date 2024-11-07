@@ -2282,8 +2282,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     #converting the enum id to enum key is not required
                     yield itertools.chain(self._group_by_key_iterator(k),DatasetAppReportDriver.resultsetrow_iterator(v,original_resultset))
 
-    @staticmethod
-    def resultset_iterator(report_result,original_resultset):
+    def resultset_iterator(self,report_result,original_resultset):
         """
         Return a iterator to iterate the raw resultset to generate a list data for report
         params:
