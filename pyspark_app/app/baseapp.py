@@ -926,6 +926,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     item.insert(col_config[0],None)
     
                                                 #fill the computed column value
+                                                computed_values = []
                                                 for col,col_config in self.computed_columns.items():
                                                     if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
@@ -948,7 +949,11 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                             record=item,
                                                             columnname=self.data_header[col_config[0]]
                                                         )
-                                                    item[col_config[0]] = val
+                                                    #can't set the computed value to the row because the same colume can be used as source column of override computed column and new computed column
+                                                    computed_values.append((col_config[0],val))
+                                                #set the computed value
+                                                for i,val in computed_values:
+                                                    item[i] = val
     
                                             #check the filter 
                                             excluded = False

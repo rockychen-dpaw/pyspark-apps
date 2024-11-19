@@ -9,6 +9,7 @@ from .. import utils
 from . import datetimes 
 from . import enums 
 from . import adb2c
+from . import datatransformer
 from .enums import get_enum,get_enum_key
 
 logger = logging.getLogger(__name__)
@@ -18,15 +19,15 @@ _optional_params = ("databaseurl","columnid","context","record","columnname","re
 transfer_method_pattern1 = "lambda f,val,{0},**kwargs:f(val,{1},**kwargs)"
 transfer_method_pattern2 = "lambda f,val,{0},**kwargs:f(val,**kwargs)"
 def _transform_factory(f):
-    kwargs = utils.get_kwargs(f,1)
-    if any(p for p in _optional_params if p in kwargs):
+    kwargs = utils.get_kwargs(f,1)[0]
+    if kwargs and any(p for p in _optional_params if p in kwargs):
         _func =  eval(transfer_method_pattern1.format((",".join("{}=None".format(p) for p in _optional_params )),(",".join("{0}={0}".format(p) for p in _optional_params if p in kwargs))))
     else:
         _func =  eval(transfer_method_pattern2.format((",".join("{}=None".format(p) for p in _optional_params )) ))
 
     return (_func,f)
 
-for func in itertools.chain(datetimes.transformers,enums.transformers,adb2c.transformers):
+for func in itertools.chain(datetimes.transformers,enums.transformers,adb2c.transformers,datatransformer.transformers):
     _transformers[func.__name__] = _transform_factory(func)
 
 def clean():

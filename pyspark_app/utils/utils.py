@@ -52,13 +52,36 @@ def get_process_starttime():
 
 def get_kwargs(f_func,required_parameters):
     """
-    Return the optional keyword parameters
+    Return the optional keyword parameters as tuple 
+    1. list of parameters or None if doesn't have
+    2. list of (k=v) or None if doesn't have
+    3. map(k:f_decode) or None if doesn't have: f_decode is a function to parse a string to expected type
+       a. datetime format should be %Y-%m-%dT%H:%M:%S.%f or %Y-%m-%dT%H:%M:%S or %Y-%m-%d
     """
     argspec = inspect.getfullargspec(f_func)
-    if argspec.varargs or argspec.varkw or argspec.kwonlyargs or ((len(argspec.args) if argspec.args else 0) - required_parameters) != (len(argspec.defaults) if argspec.defaults else 0):
+    if argspec.varargs or argspec.kwonlyargs or ((len(argspec.args) if argspec.args else 0) - required_parameters) != (len(argspec.defaults) if argspec.defaults else 0):
         raise Exception("Function should only have {} required parameters and optional multiple keyword parameters.".format(required_parameters))
 
-    return argspec.args[required_parameters:] if argspec.defaults else []
+    f_decodes = {}
+    parameters = []
+    arguments = []
+    if argspec.defaults:
+        for p,v in zip(argspec.args[required_parameters:],argspec.defaults):
+            parameters.append(p)
+            arguments.append("{}={}".format(p,v))
+            if isinstance(v,int):
+                f_decodes[p] = lambda d:int(d) if d else None
+            elif isinstance(v,bool):
+                f_decodes[p] = lambda d: d.lower() == 'true' if d else False
+            elif isinstance(v,float):
+                f_decodes[p] = lambda d: float(d) if d else None
+            elif isinstance(v,datetime):
+                f_decodes[p] = lambda d: timezone.make_aware(datetime.strptime(d,"%Y-%m-%dT%H:%M:%S.%f" if "." in d else ("%Y-%m-%dT%H:%M:%S" if "T" in d else "%Y-%m-%d") )) if d else None
+    return (
+        parameters or None,
+        arguments or None,
+        f_decodes
+    )
 
 def remove_file(f):
     if not f: 
