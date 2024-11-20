@@ -94,6 +94,7 @@ class DynamicFunction(object):
         code,modified = self.load()
         if self.name in self.functions and modified < self.functions[self.name][1]:
             #cached function metadata is up to date.
+            self.functions[self.name][2] = timezone.localtime() + timedelta(seconds=self.expiretime)
             return (self.functions[self.name][0],True)
 
         #code isn't initialize or the parsed function metadata is outdated, unload the module first if have one

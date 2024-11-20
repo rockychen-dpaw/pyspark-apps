@@ -29,8 +29,8 @@ def datatransform(data,databaseurl=None,columnid=None,context=None,record=None,c
     if transformer not in _transformers or not cached:
         _transformers[transformer] = transformer_factory(metadata[1])
 
-    _func = _transformers[transformer]
+    _func,f = _transformers[transformer]
 
-    return _func(data,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
+    return _func(f,data,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
 
 transformers = [datatransform]

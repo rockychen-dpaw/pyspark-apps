@@ -912,6 +912,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 dataset_size = 0
                                 try:
                                     with self.get_srcdatafilereader(src_datafile) as datafilereader:
+                                        if self.computed_columns:
+                                            computed_values = {}
                                         for item in datafilereader.rows:
                                             #normalize the data
                                             if ExecutorContext.reportcolumns_normalize:
@@ -926,7 +928,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     item.insert(col_config[0],None)
     
                                                 #fill the computed column value
-                                                computed_values = []
+                                                i = 0
                                                 for col,col_config in self.computed_columns.items():
                                                     if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
@@ -950,9 +952,9 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                             columnname=self.data_header[col_config[0]]
                                                         )
                                                     #can't set the computed value to the row because the same colume can be used as source column of override computed column and new computed column
-                                                    computed_values.append((col_config[0],val))
+                                                    computed_values[col_config[0]] = val
                                                 #set the computed value
-                                                for i,val in computed_values:
+                                                for i,val in computed_values.items():
                                                     item[i] = val
     
                                             #check the filter 

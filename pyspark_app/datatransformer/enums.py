@@ -326,7 +326,7 @@ def str2group(value,databaseurl=None,columnid=None,context=None,record=None,colu
                     raise Exception("Please declare the enum type for column({})".format(columnid))
     value = value or ""
     for k,v,f in enum_dicts[columnid]:
-        if f(value,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs):
+        if f[0](f[1],value,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs):
             return v if return_id else k
 
     raise Exception("Can't find the group of the value({1}) for column({0})".format(columnid,value))
