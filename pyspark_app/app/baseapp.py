@@ -427,7 +427,7 @@ class DatasetConfig(object):
         self._src_data_header = header
         if self.computed_columns:
             headers = list(header)
-            for column,override,column_config in self.computed_columns.items():
+            for column,index,override,column_config in self.computed_columns:
                 if override:
                     #this computed column only overrides the column value
                     continue
@@ -450,18 +450,18 @@ class DatasetConfig(object):
     def computed_columns(self):
         if self._computed_columns is None:
             if not self.data_header:
-                self._computed_columns = {}
+                self._computed_columns = []
             elif self.computed_column_map:
-                computed_columns = collections.OrderedDict()
+                computed_columns = []
                 for i in range(len(self.data_header)):
                     column = self.data_header[i]
                     if column not in self.computed_column_map:
                         continue
                     override = True if i == self.computed_column_map[column][COMPUTEDCOLUMN_COLUMNINDEX] else False
-                    computed_columns[column] = (i,override,self.computed_column_map[column])
+                    computed_columns.append((column,i,override,self.computed_column_map[column]))
                 self._computed_columns = computed_columns
             else:
-                self._computed_columns = {}
+                self._computed_columns = []
 
         return self._computed_columns
 
@@ -912,8 +912,6 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                 dataset_size = 0
                                 try:
                                     with self.get_srcdatafilereader(src_datafile) as datafilereader:
-                                        if self.computed_columns:
-                                            computed_values = {}
                                         for item in datafilereader.rows:
                                             #normalize the data
                                             if ExecutorContext.reportcolumns_normalize:
@@ -922,41 +920,64 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                             #fill the computed row
                                             if self.computed_columns:
                                                 #expand the row first
-                                                for col,col_config in self.computed_columns.items():
-                                                    if col_config[1]:
+                                                for col,pos,override,col_config in self.computed_columns:
+                                                    if override:
                                                         continue
-                                                    item.insert(col_config[0],None)
+                                                    item.insert(index,None)
     
                                                 #fill the computed column value
-                                                i = 0
-                                                for col,col_config in self.computed_columns.items():
-                                                    if col_config[2][COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                for col,pos,override,col_config in self.computed_columns:
+                                                    if override:
+                                                        continue
+                                                    if col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
-                                                            col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
-                                                            valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            col_config[COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
                                                             databaseurl=self.databaseurl,
-                                                            columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                            columnid=col_config[COMPUTEDCOLUMN_COLUMNID],
                                                             context=context,
                                                             record=item,
-                                                            columnname=self.data_header[col_config[0]],
-                                                            **col_config[2][COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
+                                                            columnname=self.data_header[pos],
+                                                            **col_config[COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
                                                         )
                                                     else:
                                                         val = datatransformer.transform(
-                                                            col_config[2][COMPUTEDCOLUMN_TRANSFORMER],
-                                                            valueat(item,col_config[2][COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            col_config[COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
                                                             databaseurl=self.databaseurl,
-                                                            columnid=col_config[2][COMPUTEDCOLUMN_COLUMNID],
+                                                            columnid=col_config[COMPUTEDCOLUMN_COLUMNID],
                                                             context=context,
                                                             record=item,
-                                                            columnname=self.data_header[col_config[0]]
+                                                            columnname=self.data_header[pos]
                                                         )
-                                                    #can't set the computed value to the row because the same colume can be used as source column of override computed column and new computed column
-                                                    computed_values[col_config[0]] = val
-                                                #set the computed value
-                                                for i,val in computed_values.items():
-                                                    item[i] = val
-    
+                                                    item[pos] = val
+
+                                                for col,pos,override,col_config in self.computed_columns:
+                                                    if not override:
+                                                        continue
+                                                    if col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                        val = datatransformer.transform(
+                                                            col_config[COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            databaseurl=self.databaseurl,
+                                                            columnid=col_config[COMPUTEDCOLUMN_COLUMNID],
+                                                            context=context,
+                                                            record=item,
+                                                            columnname=self.data_header[pos],
+                                                            **col_config[COMPUTEDCOLUMN_COLUMNINFO]["parameters"]
+                                                        )
+                                                    else:
+                                                        val = datatransformer.transform(
+                                                            col_config[COMPUTEDCOLUMN_TRANSFORMER],
+                                                            valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
+                                                            databaseurl=self.databaseurl,
+                                                            columnid=col_config[COMPUTEDCOLUMN_COLUMNID],
+                                                            context=context,
+                                                            record=item,
+                                                            columnname=self.data_header[pos]
+                                                        )
+                                                    item[pos] = val
+
                                             #check the filter 
                                             excluded = False
                                             for columnindex,reportcolumns in ExecutorContext.allreportcolumns.items():

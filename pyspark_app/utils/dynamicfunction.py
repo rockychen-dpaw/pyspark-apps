@@ -96,6 +96,7 @@ class DynamicFunction(object):
             #cached function metadata is up to date.
             self.functions[self.name][2] = timezone.localtime() + timedelta(seconds=self.expiretime)
             return (self.functions[self.name][0],True)
+        logger.debug("Load the function({}.{})".format(self.__class__.__name__,self.name))
 
         #code isn't initialize or the parsed function metadata is outdated, unload the module first if have one
         self.unload() 

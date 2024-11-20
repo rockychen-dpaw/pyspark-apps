@@ -28,6 +28,7 @@ def datatransform(data,databaseurl=None,columnid=None,context=None,record=None,c
     metadata,cached = transformerobj.function_metadata
     if transformer not in _transformers or not cached:
         _transformers[transformer] = transformer_factory(metadata[1])
+        logger.debug("Reload the transformer({})".format(transformer))
 
     _func,f = _transformers[transformer]
 
