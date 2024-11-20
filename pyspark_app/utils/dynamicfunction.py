@@ -17,7 +17,6 @@ class DynamicFunction(object):
     """
     f_name = None
     modules = None
-    expiretime = 3600
     functions = None # {name:[refreshtime, func, [k=v,k=v], [k,k] ]
     f_module_name = lambda self:"{}_{}".format(self.__class__.__name__,self.name.replace(" ","_"))
 
@@ -47,32 +46,28 @@ class DynamicFunction(object):
         """
         Return (the function ,cached)
         """
-        metadata,cached = self.function_metadata
-        return (metadata[1],cached)
+        return self.function_metadata[1]
         
     @property
     def kwargs(self):
         """
         Return the keyword parameters as key=value separated by "," if have; otherwise return None
         """
-        metadata,cached = self.function_metadata
-        return (metadata[3],cached)
+        return self.function_metadata[3]
 
     @property
     def parameters(self):
         """
         Return the list of keywork parameter name if have; otherwise return None
         """
-        metadata,cached = self.function_metadata
-        return (metadata[2],cached)
+        return self.function_metadata[2]
 
     @property
     def f_decodes(self):
         """
         Return a map between parameter name and decode function if have;otherwise return None
         """
-        metadata,cached = self.function_metadata
-        return (metadata[4],cached)
+        return self.function_metadata[4]
 
     def _compile_code(self):
         """
@@ -87,21 +82,10 @@ class DynamicFunction(object):
         return a tuple(function metadata, True if cached else False)
         
         """
-        if self.name in self.functions and timezone.localtime() > self.functions[self.name][2]:
-            #cached function metadata is up to date.
-            return (self.functions[self.name][0],True)
-
-        code,modified = self.load()
-        if self.name in self.functions and modified < self.functions[self.name][1]:
-            #cached function metadata is up to date.
-            self.functions[self.name][2] = timezone.localtime() + timedelta(seconds=self.expiretime)
-            return (self.functions[self.name][0],True)
         logger.debug("Load the function({}.{})".format(self.__class__.__name__,self.name))
 
-        #code isn't initialize or the parsed function metadata is outdated, unload the module first if have one
-        self.unload() 
-
         #parse the code 
+        code,modified = self.load()
         code  = code.strip() if code else None
         if not code :
             raise Exception("Code is required.")
@@ -144,9 +128,7 @@ class DynamicFunction(object):
 
             self.modules[self.name] = codemodule
 
-        self.functions[self.name] = [function_metadata,timezone.localtime(),timezone.localtime() + timedelta(seconds=self.expiretime)]
-
-        return (function_metadata,False)
+        return function_metadata
 
     def decode_arguments(self,arguments):
         """
@@ -162,7 +144,7 @@ class DynamicFunction(object):
 
     def __call__(self,value,**kwargs):
         if kwargs:
-            return self.function[0](value,**self.decode_arguments(kwargs))
+            return self.function(value,**self.decode_arguments(kwargs))
         else:
-            return self.function[0](value)
+            return self.function(value)
 

@@ -19,19 +19,7 @@ class DataTransformer(DynamicFunction):
                     raise Exception("Datatransfer({}) does not exist".format(self.name))
                 return data
 
-_transformers = {}
-def datatransform(data,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=None,transformer=None,**kwargs):
-    if not transformer:
-        raise Exception("Transformer is missing.")
-
+def get_transformer(databaseurl,transformer):
     transformerobj = DataTransformer(databaseurl,transformer)
-    metadata,cached = transformerobj.function_metadata
-    if transformer not in _transformers or not cached:
-        _transformers[transformer] = transformer_factory(metadata[1])
-        logger.debug("Reload the transformer({})".format(transformer))
+    return transformerobj.function
 
-    _func,f = _transformers[transformer]
-
-    return _func(f,data,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
-
-transformers = [datatransform]

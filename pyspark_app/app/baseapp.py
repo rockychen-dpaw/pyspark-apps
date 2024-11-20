@@ -923,7 +923,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 for col,pos,override,col_config in self.computed_columns:
                                                     if override:
                                                         continue
-                                                    item.insert(index,None)
+                                                    item.insert(pos,None)
     
                                                 #fill the computed column value
                                                 for col,pos,override,col_config in self.computed_columns:
