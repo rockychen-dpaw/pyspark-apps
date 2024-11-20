@@ -930,7 +930,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     if override:
                                                         continue
                                                     if True:
-                                                        val = val
+                                                        val = valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX])
                                                     elif col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
                                                             col_config[COMPUTEDCOLUMN_TRANSFORMER],
@@ -958,7 +958,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     if not override:
                                                         continue
                                                     if True:
-                                                        val = val
+                                                        val = valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX])
                                                     elif col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
                                                             col_config[COMPUTEDCOLUMN_TRANSFORMER],
