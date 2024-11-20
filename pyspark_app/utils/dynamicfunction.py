@@ -82,8 +82,6 @@ class DynamicFunction(object):
         return a tuple(function metadata, True if cached else False)
         
         """
-        logger.debug("Load the function({}.{})".format(self.__class__.__name__,self.name))
-
         #parse the code 
         code,modified = self.load()
         code  = code.strip() if code else None
