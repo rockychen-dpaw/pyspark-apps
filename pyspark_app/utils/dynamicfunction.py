@@ -143,7 +143,7 @@ class DynamicFunction(object):
 
             self.modules[self.name] = codemodule
 
-        self.functions[self.name] = (function_metadata,timezone.localtime(),timezone.localtime() + timedelta(seconds=self.expiretime))
+        self.functions[self.name] = [function_metadata,timezone.localtime(),timezone.localtime() + timedelta(seconds=self.expiretime)]
 
         return (function_metadata,False)
 
