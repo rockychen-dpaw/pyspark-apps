@@ -11,6 +11,7 @@ import psycopg2
 from .. import database
 from ..utils import timezone,get_processid
 from .. import settings
+from .helper import transformer_factory
 
 
 logger = logging.getLogger(__name__)
@@ -291,7 +292,7 @@ def _is_group_via_pattern(pattern):
 
     return _func
 
-def str2group(value,databaseurl=None,columnid=None,return_id=True):
+def str2group(value,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=True,**kwargs):
     if not columnid:
         raise Exception("Missing column id")
     if not databaseurl:
@@ -310,21 +311,22 @@ def str2group(value,databaseurl=None,columnid=None,return_id=True):
                         raise Exception("Configure the group pattern via 'pattern' or lambda function via 'is_group' for the group({1}) of column({0})".format(columnid,row[0]))
                     if row[2].get("is_group"):
                         try:
-                            enum_dicts[columnid].append((row[0],row[1],eval(row[2].get("is_group"))))
+                            func = eval(row[2].get("is_group"))
                         except Exception as ex:
                             raise Exception("The lambda expression({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["is_group"],str(ex)))
                     elif row[2].get("pattern"):
                         try:
-                            enum_dicts[columnid].append((row[0],row[1],_is_group_via_pattern(row[2].get("pattern"))))
+                            func = _is_group_via_pattern(row[2].get("pattern"))
                         except Exception as ex:
                             raise Exception("The pattern({2}) is incorrect for the group({1}) of column({0}).{3}".format(columnid,row[0],row[2]["pattern"],str(ex)))
                     else:
                         raise Exception("Configure the group pattern via 'pattern' or lambda function via 'is_group' for the group({1}) of column({0})".format(columnid,row[0]))
+                    enum_dicts[columnid].append((row[0],row[1],transformer_factory(func)))
                 if not enum_dicts[columnid]:
                     raise Exception("Please declare the enum type for column({})".format(columnid))
     value = value or ""
     for k,v,f in enum_dicts[columnid]:
-        if f(value):
+        if f(value,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs):
             return v if return_id else k
 
     raise Exception("Can't find the group of the value({1}) for column({0})".format(columnid,value))

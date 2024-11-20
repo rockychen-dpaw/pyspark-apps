@@ -1,6 +1,7 @@
 import logging
 from ..utils.dynamicfunction import DynamicFunction
 from .. import database
+from .helper import transformer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,6 @@ class DataTransformer(DynamicFunction):
                 return data
 
 _transformers = {}
-_optional_params = ("databaseurl","columnid","context","record","columnname","return_id")
-transfer_method_pattern1 = "lambda f,val,{0},**kwargs:f(val,{1},**kwargs)"
-transfer_method_pattern2 = "lambda f,val,{0},**kwargs:f(val,**kwargs)"
 def datatransform(data,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=None,transformer=None,**kwargs):
     if not transformer:
         raise Exception("Transformer is missing.")
@@ -29,14 +27,10 @@ def datatransform(data,databaseurl=None,columnid=None,context=None,record=None,c
     transformerobj = DataTransformer(databaseurl,transformer)
     metadata,cached = transformerobj.function_metadata
     if transformer not in _transformers or not cached:
-        if metadata[2] and any(p for p in _optional_params if p in metadata[2]):
-            _func =  eval(transfer_method_pattern1.format((",".join("{}=None".format(p) for p in _optional_params )),(",".join("{0}={0}".format(p) for p in _optional_params if p in metadata[2]))))
-        else:
-            _func =  eval(transfer_method_pattern2.format((",".join("{}=None".format(p) for p in _optional_params )) ))
-        _transformers[transformer] = _func
-    else:
-        _func = _transformers[transformer]
+        _transformers[transformer] = transformer_factory(metadata[1])
 
-    return _func(metadata[1],data,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
+    _func = _transformers[transformer]
+
+    return _func(data,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
 
 transformers = [datatransform]
