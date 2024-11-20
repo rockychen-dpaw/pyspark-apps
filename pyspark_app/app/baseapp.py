@@ -929,9 +929,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 for col,pos,override,col_config in self.computed_columns:
                                                     if override:
                                                         continue
-                                                    if True:
-                                                        val = valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX])
-                                                    elif col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                    if col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
                                                             col_config[COMPUTEDCOLUMN_TRANSFORMER],
                                                             valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
@@ -957,9 +955,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 for col,pos,override,col_config in self.computed_columns:
                                                     if not override:
                                                         continue
-                                                    if True:
-                                                        val = valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX])
-                                                    elif col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
+                                                    if col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
                                                             col_config[COMPUTEDCOLUMN_TRANSFORMER],
                                                             valueat(item,col_config[COMPUTEDCOLUMN_COLUMNINDEX]),
