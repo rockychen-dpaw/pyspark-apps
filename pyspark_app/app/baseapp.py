@@ -957,7 +957,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 for col,pos,override,col_config in self.computed_columns:
                                                     if not override:
                                                         continue
-                                                    if True
+                                                    if True:
                                                         val = val
                                                     elif col_config[COMPUTEDCOLUMN_COLUMNINFO].get("parameters"):
                                                         val = datatransformer.transform(
