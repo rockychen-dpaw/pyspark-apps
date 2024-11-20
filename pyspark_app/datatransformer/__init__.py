@@ -26,6 +26,9 @@ def clean():
 
 def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None,columnname=None,return_id=True,**kwargs):
     _func,f =  _transformers[f_name]
+    if f_name == "datatransform" and kwargs["transformer"] == "EmailFromSSOUser":
+        return val
+        
     return _func(f,val,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
 
 def is_enum_func(f_name): 
