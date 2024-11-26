@@ -15,6 +15,20 @@ def _number_in(l,vals):
 
     return result
 
+def _number_not_in(l,vals):
+    result = None
+    for val in vals:
+        if result is None:
+            result = np.equal(l,val)
+        else:
+            result |= np.equal(l,val)
+    if isinstance(result,np.ndarray):
+        for i in range(len(result)):
+            result[i] = not result[i]
+        return result
+    else:
+        return not result
+
 def _string_in(l,vals):
     result = None
     for val in vals:
@@ -36,6 +50,7 @@ number_npoperator_map = {
     "<=":lambda l,val:np.less_equal(l,val),
     "between":lambda l,val:np.greater_equal(l,val[0]) & np.less(l,val[1]),
     "in":_number_in,
+    "not in":_number_not_in,
     "avg_sum":lambda l:np.sum(l),
     "sum":lambda l:np.sum(l),
     "min":lambda l:np.min(l),
@@ -74,7 +89,8 @@ number_operator_map = {
     "<":lambda l,val:l < val,
     "<=":lambda l,val:l <= val,
     "between":lambda l,val:l >= val[0] and l < val[1],
-    "in":lambda l,vals: l in vals
+    "in":lambda l,vals: l in vals,
+    "not in":lambda l,vals: l not in vals
 }
 
 string_operator_map = {
