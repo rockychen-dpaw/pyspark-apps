@@ -2882,7 +2882,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                         #remove distinct columns from key and add a column into value
                         if len(self.report_group_by) == len(self.distinct_columns) and self.report_type == NoneReportType:
                             rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,False))
-                            report_result = rdd3.reduce(self.merge_reportresult).collect()
+                            report_result = [rdd3.reduce(self.merge_reportresult)]
                         else:
                             rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,True))
                             report_result = rdd3.reduceByKey(self.merge_reportresult).collect()
