@@ -539,8 +539,6 @@ def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=No
         key = default
     elif isinstance(key,int):
         key = str(key)
-        if len(key) >=512:
-            key = key[:512]
     #try to get the value from cache
     if columnid not in enum_dicts:
         enum_dicts[columnid] = {}
@@ -573,6 +571,8 @@ SET key='{1}'
                 enum_dicts[columnid][default] = 0
                 return 0
             dbkey = key.replace("'","''") 
+            if len(dbkey) >= 512:
+                dbkey = dbkey[:511]
             sql = "select value from datascience_datasetenum where column_id = {} and key = '{}'".format(columnid,dbkey)
             cursor.execute(sql)
             data = cursor.fetchone()
