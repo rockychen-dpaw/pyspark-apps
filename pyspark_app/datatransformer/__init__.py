@@ -10,6 +10,7 @@ from . import datetimes
 from . import enums 
 from . import adb2c
 from . import datatransformer
+from .. import database
 from .enums import get_enum,get_enum_key
 from .helper import transformer_factory
 
@@ -60,6 +61,7 @@ VALUES
                     conn.commit()
                 except:
                     conn.rollback()
+                    raise
         raise 
 
 def is_enum_func(f_name): 
