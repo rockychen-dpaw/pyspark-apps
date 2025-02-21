@@ -52,7 +52,8 @@ VALUES
             context['category'] if context else "Unknown", 
             timezone.dbtime(context.get("dstime")) if context and context.get("dstime") else 'Unknown', 
             context.get("dsfile","Unknown") if context else "Unknown",
-            "Failed to tranform the recode({}).msg={}".format(" ; ".join([str(d) for d in record],str(ex)),
+            "Failed to tranform the recode({}).msg={}".format(str(record),str(ex)).replace("'","''")
+,
             timezone.dbtime()
         )
         with database.Database(databaseurl).get_conn() as conn:
@@ -60,9 +61,9 @@ VALUES
                 try:
                     cursor.execute(sql)
                     conn.commit()
-                except:
+                except Exception as ex1:
                     conn.rollback()
-                    raise
+                    logger.error("Failed to execute the sql {}.{}".format(sql,str(ex1)))
         raise 
 
 def is_enum_func(f_name): 
