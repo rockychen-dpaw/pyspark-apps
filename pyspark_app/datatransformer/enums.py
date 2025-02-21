@@ -539,6 +539,8 @@ def resourcekey(domain,databaseurl=None,columnid=None,columnname=None,context=No
         key = default
     elif isinstance(key,int):
         key = str(key)
+        if len(key) >=512:
+            key = key[:512]
     #try to get the value from cache
     if columnid not in enum_dicts:
         enum_dicts[columnid] = {}
