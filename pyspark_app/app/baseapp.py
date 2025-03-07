@@ -2110,7 +2110,7 @@ class DatasetAppDownloadDriver(DatasetColumnConfig):
             self.download_datafiles(spark)
     
             if self.missingfiles:
-                logger.warning("The {0} files({1}) are missing".format(" , ".join(self.datasetname,self.missingfiles)))
+                logger.warning("The {0} files({1}) are missing".format(" , ".join([self.datasetname,self.missingfiles])))
     
             if self.datafiles:
                 logger.info("The {0} files({1}) have been downloaded or already downloaded before".format(self.datasetname,self.datafiles))
