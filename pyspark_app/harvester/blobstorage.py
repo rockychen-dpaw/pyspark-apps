@@ -9,7 +9,10 @@ logger = logging.getLogger(__name__)
 
 class AzureBlobStorageHarvester(ResourceHarvester):
     def __init__(self,chunk_size = 1024 * 1024,**kwargs):
-        self._container_client = ContainerClient(**kwargs)
+        if "container_url" in kwargs:
+            self._container_client = ContainerClient.from_container_url(**kwargs)
+        else:
+            self._container_client = ContainerClient(**kwargs)
         self._path = None
         self._client = None
         self._chunk_size = chunk_size
