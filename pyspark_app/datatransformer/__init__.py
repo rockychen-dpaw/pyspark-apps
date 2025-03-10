@@ -12,7 +12,7 @@ from . import adb2c
 from . import datatransformer
 from .. import database
 from ..utils import timezone
-from .enums import get_enum,get_enum_key
+from .enums import get_enum,get_enum_key,search_enums
 from .helper import transformer_factory
 
 logger = logging.getLogger(__name__)

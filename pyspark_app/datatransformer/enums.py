@@ -624,6 +624,33 @@ def get_enum(key,databaseurl=None,columnid=None):
             else:
                 return None
 
+def search_enums(pattern,databaseurl=None,columnid=None):
+    if not columnid:
+        raise Exception("Missing column id")
+    if not databaseurl:
+        raise Exception("Missing database url")
+
+    pattern = pattern.strip() if (pattern and pattern.strip()) else ""
+    pattern = pattern.replace("*","%")
+
+    if columnid not in enum_dicts:
+        enum_dicts[columnid] = {}
+
+    with database.Database(databaseurl).get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("select key,value from datascience_datasetenum where column_id = {} and key like '{}'".format(columnid,pattern))
+            rows = cursor.fetchall()
+            if rows:
+                datas = []
+                for row in rows:
+                    datas.append(row[1])
+                    enum_dicts[columnid][row[0]] = row[1]
+
+                return datas or None
+            else:
+                return None
+            return [row[0] for row in cursor.fetchall()] or None
+            
 enum_val_dicts = {}
 def get_enum_key(value,databaseurl=None,columnid=None,return_val_ifmissing=True):
     if not columnid:

@@ -2496,7 +2496,12 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                             #need transformation
                             if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                 #is enum type
-                                cond[2] = datatransformer.get_enum(cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+                                if cond[1] == "pattern":
+                                    #tranform the operator 'pattern' to operator 'in'
+                                    cond[2] = datatransformer.search_enums(cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
+                                    cond[1] = "in"
+                                else:
+                                    cond[2] = datatransformer.get_enum(cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
                             else:
                                 if col[DRIVER_COLUMNINFO] and col[DRIVER_COLUMNINFO].get("parameters"):
                                     cond[2] = datatransformer.transform(col[DRIVER_TRANSFORMER],cond[2],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID],**col[DRIVER_COLUMNINFO]["parameters"],context=context)
