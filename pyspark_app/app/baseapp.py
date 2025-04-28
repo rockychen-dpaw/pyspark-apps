@@ -53,14 +53,14 @@ def rawdatacondition_factory(column_map,rawdataconditions):
     for cond in rawdataconditions:
         col = ExecutorContext.column_map[cond[0]]
         if is_int_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:int(row[col[EXECUTOR_COLUMNINDEX]]),cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:int(row[colindex]),cond[2]))
         elif is_float_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:float(row[col[EXECUTOR_COLUMNINDEX]]),cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:float(row[colindex]),cond[2]))
         else:
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),lambda row:row[col[EXECUTOR_COLUMNINDEX]],cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:row[colindex],cond[2]))
     def _func(row):
         for func in funcs:
-            if not func[0](func[1](row),func[2]):
+            if not func[0](func[2](row,func[1]),func[3]):
                 return False
 
         return True
