@@ -16,7 +16,7 @@ setup(
     zip_safe=False,
     keywords=['pyspark','datascience'],
     install_requires=[
-        'numpy==1.24.2',
+        'numpy==2.2.0',
         'pandas==1.5.3',
         'requests==2.31.0',
         'h5py==3.8.0',
