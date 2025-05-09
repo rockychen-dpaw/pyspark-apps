@@ -18,7 +18,7 @@ setup(
     install_requires=[
         'numpy==2.2.0',
         'pandas==2.2.3',
-        'requests>=2.32.3',
+        'requests==2.31.0',
         'h5py==3.13.0',
         'pytz==2025.2',
         'psutil==7.0.0',
