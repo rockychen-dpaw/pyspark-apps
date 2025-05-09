@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='pyspark-apps',
-    version='1.0.0',
+    version='1.0.1',
     packages=['pyspark_app','pyspark_app.app','pyspark_app.harvester','pyspark_app.operation','pyspark_app.utils','pyspark_app.datatransformer','pyspark_app.datafile'],
     description='Pyspark applications to generate data report on all kinds of big data',
     url='https://github.com/dbca-wa/pyspark-apps',
@@ -18,7 +18,6 @@ setup(
     install_requires=[
         'numpy==2.2.0',
         'pandas==2.2.3',
-        'requests==2.31.0',
         'h5py==3.13.0',
         'pytz==2025.2',
         'psutil==7.0.0',
