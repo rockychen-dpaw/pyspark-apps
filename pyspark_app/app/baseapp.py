@@ -1220,7 +1220,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
         self.computed_column_map = {}
          
     def report_details(self,datareader,indexes):
-        if indexes == "__all__":
+        if isinstance(indexes,str) and indexes == "__all__":
             for row in datareader.rows:
                 yield row
         else:
