@@ -1,33 +1,9 @@
 import numpy  as np
 import logging
 
-from ..datatransformer import is_number_type,get_np_type,is_string_type
+from ..datatransformer import is_number_type,get_np_type,is_string_type,get_type_shape
 
 logger = logging.getLogger(__name__)
-
-def _number_in(l,vals):
-    result = None
-    for val in vals:
-        if result is None:
-            result = np.equal(l,val)
-        else:
-            result |= np.equal(l,val)
-
-    return result
-
-def _number_not_in(l,vals):
-    result = None
-    for val in vals:
-        if result is None:
-            result = np.equal(l,val)
-        else:
-            result |= np.equal(l,val)
-    if isinstance(result,np.ndarray):
-        for i in range(len(result)):
-            result[i] = not result[i]
-        return result
-    else:
-        return not result
 
 def _string_in(l,vals):
     result = None
@@ -39,37 +15,159 @@ def _string_in(l,vals):
 
     return result
 
+_IP_RANGES={
+
+}
+def _in_iprange(ip,iprange):
+    iprange_data = _IP_RANGES.get(iprange)
+    if not iprange_data:
+        try:
+            if ":" in iprange:
+                #ipv6
+                subnetmask,cidrbits = iprange.rsplit("/",1)
+                groups = int(cidrbits / 16)
+                subnetmaskgroups = [int(d,16) if d else 0 for d in subnetmask.split(":")]
+                if cidrbits % 16 > 0:
+                    partgroup = int(subnetmask[5 * groups:5 * groups + 4],16)
+                    mask = int("{}{}".format()"1" *  (cidrbits % 16),"0" * (16 - cidrbits * 16)),2)
+                    partgroupmask = partgroup & mask
+                    if groups == 0:
+                        iprange_data = (601,partgroupmask)
+                    else:
+                        iprange_data = (611,groups,subnetmaskgroups[:groups],partgroupmask)
+                elif groups == 0:
+                    iprange_data = (600,)
+                else:
+                    iprange_data = (610,groups,subnetmaskgroups[:groups])
+            else:
+                subnetmask,cidrbits = iprange.rsplit("/",1)
+                groups = int(cidrbits / 8)
+    
+                groups_endindex = -1
+                for i in range(groups):
+                    groups_endindex = subnetmask.index(".",groups_endindex)
+    
+                if cidrbits % 8 > 0:
+                    partgroup = int(subnetmask[index:].split(".",1)[0])
+                    mask = int("{}{}".format()"1" *  (cidrbits % 8),"0" * (8 - cidrbits * 8)),2)
+                    partgroupmask = partgroup & mask
+                    if groups == 0:
+                        if groups == 3:
+                            #the partgroup is the last group
+                            iprange_data = (401,groups_endindex + 1,partgroupmask)
+                        else:
+                            iprange_data = (402,groups_endindex + 1,partgroupmask)
+                    else:
+                        if groups == 3:
+                            #the partgroup is the last group
+                            iprange_data = (411,subnetmask[:index],groups_endindex + 1,partgroupmask)
+                        else:
+                            iprange_data = (412,subnetmask[:index],groups_endindex + 1,partgroupmask)
+                elif groups == 0:
+                    iprange_data = (400,)
+                else:
+                    iprange_data = (410,subnetmask[:index])
+        except:
+            iprange_data = (0,)
+        _IP_RANGES[iprange]=iprange_data
+    
+    if iprange_data[0] == 0:
+        return False
+    try:
+        if ":" in ip:
+            #ipv6
+            if iprange_data[0] < 600:
+                return False
+            
+            if iprange_data[0] == 610:
+                #check subnet groups
+                groups = ip.split(":",iprange_data[1])
+                for i in range(iprange_data[1]):
+                    if int(groups[i],16) != iprange_data[2][i]:
+                        return False
+            elif iprange_data[0] == 601:
+                #check subnet part group
+                partgroup = int(ip.split(":",1)[0],16)
+                if partgroup & iprange_data[1] != iprange_data[1]:
+                    return False
+            elif iprange_data[0] == 611:
+                groups = ip.split(":",iprange_data[1] + 1)
+                #check subnet groups
+                for i in range(iprange_data[1]):
+                    if int(groups[i],16) != iprange_data[2][i]:
+                        return False
+    
+                #check subnet part group
+                if group[iprange_data[1]] & iprange_data[1] != iprange_data[1]:
+                    return False
+            else:
+                return False
+    
+        else:
+            #ipv4
+            if iprange_data[0] > 500:
+                return False
+    
+            #check the subnet groups
+            if iprange_data[0] in (410,411,412):
+                if not ip.startswith(iprange_data[1]):
+                    return False
+    
+            #check the subnet part group
+            if iprange_data[0] == 401:
+                partgroup = int(ip[iprange_data[1]:])
+                if partgroup & iprange_data[2] != iprange_data[2]:
+                    return False
+            elif iprange_data[0] == 402:
+                partgroup = int(ip[iprange_data[1]:ip.index(".",iprange_data[1])])
+                if partgroup & iprange_data[2] != iprange_data[2]:
+                    return False
+            elif iprange_data[0] == 411:
+                partgroup = int(ip[iprange_data[2]:])
+                if partgroup & iprange_data[3] != iprange_data[3]:
+                    return False
+            elif iprange_data[0] == 412:
+                partgroup = int(ip[iprange_data[2]:ip.index(".",iprange_data[2])])
+                if partgroup & iprange_data[3] != iprange_data[3]:
+                    return False
+            else:
+                return False
+    except:
+        return False
+
+    return True
+
 number_npoperator_map = {
-    "==":lambda l,val:np.equal(l,val),
-    "=":lambda l,val:np.equal(l,val),
-    "!=":lambda l,val:np.equal(l,val) == False,
-    "<>":lambda l,val:np.equal(l,val) == False,
-    ">":lambda l,val:np.greater(l,val),
-    ">=":lambda l,val:np.greater_equal(l,val),
-    "<":lambda l,val:np.less(l,val),
-    "<=":lambda l,val:np.less_equal(l,val),
-    "between":lambda l,val:np.greater_equal(l,val[0]) & np.less(l,val[1]),
-    "in":_number_in,
-    "not in":_number_not_in,
-    "avg_sum":lambda l:np.sum(l),
-    "sum":lambda l:np.sum(l),
-    "min":lambda l:np.min(l),
-    "max":lambda l:np.max(l)
+    "==":lambda val,cond:np.equal(val,cond),
+    "=":lambda val,cond:np.equal(val,cond),
+    "!=":lambda val,np.logical_not(cond:np.equal(val,cond)),
+    "<>":lambda val,np.logical_not(cond:np.equal(val,cond)),
+    ">":lambda val,cond:np.greater(val,cond),
+    ">=":lambda val,cond:np.greater_equal(val,cond),
+    "<":lambda val,cond:np.less(val,cond),
+    "<=":lambda val,cond:np.less_equal(val,cond),
+    "between":lambda val,cond:np.logical_and(np.greater_equal(val,cond[0]) , np.less(val,cond[1])),
+    "in":lambda val,cond: np.any(np.equal(cond,val)),
+    "not in":lambda val,cond: np.logical_not(np.any(np.equal(cond,val))),
+    "avg_sum":lambda val:np.sum(val),
+    "sum":lambda val:np.sum(val),
+    "min":lambda val:np.min(val),
+    "max":lambda val:np.max(val)
 }
 
 string_npoperator_map = {
-    "==":lambda l,val:np.char.equal(l,val),
-    "=":lambda l,val:np.char.equal(l,val),
-    "!=":lambda l,val:np.char.equal(l,val) == False,
-    "<>":lambda l,val:np.char.equal(l,val) == False,
-    "in":_string_in,
-    "contain":lambda l,val:np.char.find(l,val)!=-1,
-    "mcontain":lambda l,val:np.logical_or.reduce([np.char.find(l,val)!=-1 for v in val]),
-    "not contain":lambda l,val:np.char.find(l,val)==-1,
-    "endswith":lambda l,val:np.char.endswith(l,val),
-    "mendswith":lambda l,val:np.logical_or.reduce([np.char.endswith(l,v) for v in val]),
-    "startswith":lambda l,val:np.char.startswith(l,val),
-    "mstartswith":lambda l,val:np.logical_or.reduce([np.char.startswith(l,v) for v in val])
+    "==":lambda val,cond:np.equal(val,cond),
+    "=":lambda val,cond:np.equal(val,cond),
+    "!=":lambda val,cond:np.logical_not(np.equal(val,cond)),
+    "<>":lambda val,cond:np.logical_not(np.equal(val,cond)),
+    "in":lambda val,cond:np.any(np.equal(val,cond)),
+    "contain":lambda val,cond:np.greater_equal(np.char.find(val,cond),0)
+    "mcontain":lambda val,cond:np.any(np.greater_equal(np.char.find(val,cond),0)),
+    "not contain":lambda val,cond:np.equal(np.char.find(val,cond),-1),
+    "endswith":lambda val,cond:np.char.endswith(val,cond),
+    "mendswith":lambda val,cond:np.any(np.char.endswith(val,cond)),
+    "startswith":lambda val,cond:np.char.startswith(val,cond),
+    "mstartswith":lambda val,cond:np.any(np.char.startswith(val,cond))
 }
 
 agg_operator_map = {
@@ -80,32 +178,36 @@ agg_operator_map = {
 }
 
 number_operator_map = {
-    "==":lambda l,val: l == val,
-    "=":lambda l,val:l == val,
-    "!=":lambda l,val: l != val,
-    "<>":lambda l,val: l != val,
-    ">":lambda l,val: l > val,
-    ">=":lambda l,val: l >= val,
-    "<":lambda l,val:l < val,
-    "<=":lambda l,val:l <= val,
-    "between":lambda l,val:l >= val[0] and l < val[1],
-    "in":lambda l,vals: l in vals,
-    "not in":lambda l,vals: l not in vals
+    "==":lambda val,cond: l == cond,
+    "=":lambda val,cond:l == cond,
+    "!=":lambda val,cond: l != cond,
+    "<>":lambda val,cond: l != cond,
+    ">":lambda val,cond: l > cond,
+    ">=":lambda val,cond: l >= cond,
+    "<":lambda val,cond:l < cond,
+    "<=":lambda val,cond:l <= cond,
+    "between":lambda val,cond:l >= cond[0] and l < cond[1],
+    "in":lambda val,conds: l in conds,
+    "not in":lambda val,conds: l not in conds
 }
 
 string_operator_map = {
-    "==":lambda l,val:l == val,
-    "=":lambda l,val:l == val,
-    "!=":lambda l,val:l != val,
-    "<>":lambda l,val:l != val,
-    "in":lambda l,vals: l in vals if l else False,
-    "contain":lambda l,val:val in l if l else False,
-    "mcontain":lambda l,val:any((v in l) for v in val) if l else False,
-    "not contain":lambda l,val: val not in l if l else True,
-    "endswith":lambda l,val: l.endswith(val) if l else False,
-    "mendswith":lambda l,val:any(l.endswith(v) for v in val) if l else False,
-    "startswith":lambda l,val:l.startswith(val) if l else False,
-    "mstartswith":lambda l,val:any(l.startswith(v) for v in val) if l else False
+    "==":lambda val,cond:l == cond,
+    "=":lambda val,cond:l == cond,
+    "!=":lambda val,cond:l != cond,
+    "<>":lambda val,cond:l != cond,
+    "in":lambda val,conds: l in conds if l else False,
+    "contain":lambda val,cond:cond in l if l else False,
+    "mcontain":lambda val,cond:any((v in l) for v in cond) if l else False,
+    "not contain":lambda val,cond: cond not in l if l else True,
+    "endswith":lambda val,cond: l.endswith(cond) if l else False,
+    "mendswith":lambda val,cond:any(l.endswith(v) for v in cond) if l else False,
+    "startswith":lambda val,cond:l.startswith(cond) if l else False,
+    "mstartswith":lambda val,cond:any(l.startswith(v) for v in cond) if l else False,
+    "ip range":lambda val,cond: _in_iprange(val,cond),
+    "not in ip range":lambda val,cond: not _in_iprange(val,cond),
+    "ip ranges":lambda val,cond: any(_in_iprange(val,c) for c in cond),
+    "not in ip ranges":lambda val,cond: not any(_in_iprange(ip,c) for c in cond)
 }
 
 def _merge_avg(d1,d2):
