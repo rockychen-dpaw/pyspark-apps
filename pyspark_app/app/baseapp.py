@@ -19,7 +19,7 @@ from pyspark_app import harvester
 from pyspark_app import database
 from pyspark_app.utils import timezone
 from pyspark_app.utils.filelock import FileLock,AlreadyLocked
-from pyspark_app.datatransformer import is_int_type,is_float_type,is_string_type,is_bool_type
+from pyspark_app.datatransformer import is_int_type,is_float_type,is_string_type,is_bool_type,is_list_type
 
 from pyspark_app import utils
 from pyspark_app import datatransformer
@@ -47,21 +47,52 @@ COMPUTEDCOLUMN_COLUMNINDEX = 1
 COMPUTEDCOLUMN_TRANSFORMER = 2
 COMPUTEDCOLUMN_COLUMNINFO = 3
 
+_get_int_column_data = lambda row,col:int(row[col[EXECUTOR_COLUMNINDEX]])
+_get_float_column_data = lambda row,col:float(row[col[EXECUTOR_COLUMNINDEX]])
+_get_bool_column_data = lambda row,col:bool(row[col[EXECUTOR_COLUMNINDEX]])
+_get_string_column_data = lambda row,col:row[col[EXECUTOR_COLUMNINDEX]]
 
-def rawdatacondition_factory(column_map,rawdataconditions):
+def rawdatacondition_factory(executor,context,column_map,rawdataconditions):
+    def _transform_column_data(executor,row,col):
+        if col[EXECUTOR_COLUMNINFO].get("parameters"):
+            return datatransformer.transform(
+                col[EXECUTOR_TRANSFORMER],
+                valueat(row,col[EXECUTOR_COLUMNINDEX]),
+                databaseurl=executor.databaseurl,
+                columnid=col[EXECUTOR_COLUMNID],
+                context=context,
+                record=row,
+                columnname=col[EXECUTOR_COLUMNNAME],
+                **col[EXECUTOR_COLUMNINFO]["parameters"]
+            )
+        else:
+            return datatransformer.transform(
+                col[EXECUTOR_TRANSFORMER],
+                valueat(row,col[EXECUTOR_COLUMNINDEX]),
+                databaseurl=executor.databaseurl,
+                columnid=col[EXECUTOR_COLUMNID],
+                context=context,
+                record=row,
+                columnname=col[EXECUTOR_COLUMNNAME]
+            )
+
     funcs = []
     for cond in rawdataconditions:
         col = ExecutorContext.column_map[cond[0]]
-        if is_int_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:int(row[colindex]),cond[2]))
+        if col[EXECUTOR_TRANSFORMER]:
+            #list type must declare the transformer
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col,_transform_column_data,cond[2]))
+        elif is_int_type(col[EXECUTOR_DTYPE]):
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col,_get_int_column_data,cond[2]))
         elif is_float_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:float(row[colindex]),cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col,_get_float_column_data,cond[2]))
         elif is_bool_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:bool(row[colindex]),cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col,_get_bool_column_data,cond[2]))
         elif is_string_type(col[EXECUTOR_DTYPE]):
-            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col[EXECUTOR_COLUMNINDEX],lambda row,colindex:row[colindex],cond[2]))
+            funcs.append((operation.get_func(col[EXECUTOR_DTYPE],cond[1]),col,_get_string_column_data,cond[2]))
         else:
             raise Exception("Data type({}) Not Support".format(col[EXECUTOR_DTYPE]))
+
     def _func(row):
         for func in funcs:
             if not func[0](func[2](row,func[1]),func[3]):
@@ -1102,11 +1133,11 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     if column_name in tmp_h5:
                                                         indexdatasets[column_name] = tmp_h5[column_name]
                                                     else:
-                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, datatransformer.get_type_shape(column_dtype,dataset_size),dtype=datatransformer.get_hdf5_type(column_dtype,columntype_parameters))
+                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, datatransformer.get_type_shape(column_dtype,columntype_parameters,dataset_size),dtype=datatransformer.get_hdf5_type(column_dtype,columntype_parameters))
                                                     indexdatasets[column_name].attrs["created"] = created
     
                                                 if column_name not in ExecutorContext.indexbuffs:
-                                                    ExecutorContext.indexbuffs[column_name] = np.empty(datatransformer.get_type_shape(column_dtype,ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,columntype_parameters))
+                                                    ExecutorContext.indexbuffs[column_name] = np.empty(datatransformer.get_type_shape(column_dtype,columntype_parameters,ExecutorContext.buffer_size,),dtype=datatransformer.get_np_type(column_dtype,columntype_parameters))
                     
                                                 #get the index data for each index column
                                                 if column_transformer:
@@ -1116,6 +1147,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                     else:
                                                         ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.transform(column_transformer,value,databaseurl=self.databaseurl,columnid=column_columnid,context=context,record=item,columnname=column_name)
                                                 else:
+                                                    if datatransformer.is_list_type(column_dtype):
+                                                        raise Exception("The column '{}', which is a list type, must declare the transformer".format(column_name))
                                                     try:
                                                         if datatransformer.is_int_type(column_dtype):
                                                             ExecutorContext.indexbuffs[column_name][indexbuff_index] = int(value.strip()) if value else datatransformer.get_default_value(column_dtype)
@@ -1125,7 +1158,7 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                             ExecutorContext.indexbuffs[column_name][indexbuff_index] = bool(value.strip()) if value else datatransformer.get_default_value(column_dtype)
                                                         elif datatransformer.is_string_type(column_dtype):
                                                             #remove non printable characters
-                                                            v = value.encode("ascii",errors="ignore").decode().strip() if value else datatransformer.get_default_value(column_dtype).
+                                                            v = value.encode("ascii",errors="ignore").decode().strip() if value else datatransformer.get_default_value(column_dtype)
                                                             typesize = None
                                                             if columntype_parameters:
                                                                 typesize = columntype_parameters.get("size")
@@ -1136,10 +1169,9 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                             #value is too long,cut to the column size
                                                             if len(v) >= typesize:
                                                                 v = v[0:typesize]
+                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = v
                                                         else:
                                                             raise Exception("The type({}) Not Support".format(column_dtype))
-    
-                                                            ExecutorContext.indexbuffs[column_name][indexbuff_index] = v
                                                     except:
                                                         ExecutorContext.indexbuffs[column_name][indexbuff_index] = datatransformer.get_default_value(column_dtype)
                 
@@ -1259,6 +1291,12 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
             dataset_time = timezone.parse(data[0])
             logger.debug("dataset_time = {}".format(dataset_time))
     
+            context={
+                "dstime":dataset_time,
+                "dsfile":data[2],
+                "phase":"Analyse",
+                "category":"Transform Computed Column Data"
+            }
             if not ExecutorContext.can_share_context(self.task_timestamp,self.reportid,ExecutorContext.ANALYSIS,self.datasetid):
                 if not ExecutorContext.report_cache_dir:
                     cache_dir = self.cachefolder
@@ -1315,6 +1353,10 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                 int_buffer = None
                 float_buffer = None
                 string_buffer = None
+                list_bool_buffer = None
+                list_int_buffer = None
+                list_float_buffer = None
+                list_string_buffer = None
                 #A map to show how to use the share data buff in filtering, group by and resultset.
                 #key will be the id of the member from filtering or group by or resultset if the column included in the list member will use the databuff;
                 #value is the data buff(int_buffer or float_buffer or string_buffer) which the column should use.
@@ -1327,32 +1369,92 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         i += 1
                         col = ExecutorContext.column_map[item[0]]
                         col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None)
-                        if datatransformer.is_int_type(col_type[0]):
-                            if int_buffer:
-                                int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
+                        if datatransformer.is_list_type(col_type[0]):
+                            if datatransformer.is_int_type(col_type[0]):
+                                if list_int_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_int_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_int_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_int_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = list_int_buffer
+                            elif datatransformer.is_float_type(col_type[0]):
+                                if list_float_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_float_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_float_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_float_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = list_float_buffer
+                            elif datatransformer.is_bool_type(col_type[0]):
+                                if list_bool_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_bool_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_bool_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_bool_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = list_bool_buffer
+                            elif datatransformer.is_string_type(col_type[0]):
+                                if list_string_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_string_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_string_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_string_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = list_string_buffer
                             else:
-                                int_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[report_condition_id(i)] = int_buffer
-                        elif datatransformer.is_float_type(col_type[0]):
-                            if float_buffer:
-                                float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
-                            else:
-                                float_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[report_condition_id(i)] = float_buffer
-                        elif datatransformer.is_bool_type(col_type[0]):
-                            if bool_buffer:
-                                bool_buffer[0] = datatransformer.ceiling_type(bool_buffer[0],col_type)
-                            else:
-                                bool_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[report_condition_id(i)] = bool_buffer
-                        elif datatransformer.is_string_type(col_type[0]):
-                            if string_buffer:
-                                string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
-                            else:
-                                string_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[report_condition_id(i)] = string_buffer
+                                raise Exception("Data type({}) Not Support".format(col_type[0]))
                         else:
-                            raise Exception("Data type({}) Not Support".format(col_type[0]))
+                            if datatransformer.is_int_type(col_type[0]):
+                                if int_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(int_buffer[0],col_type)
+                                    if ceiling_type:
+                                        int_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    int_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = int_buffer
+                            elif datatransformer.is_float_type(col_type[0]):
+                                if float_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(float_buffer[0],col_type)
+                                    if ceiling_type:
+                                        float_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    float_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = float_buffer
+                            elif datatransformer.is_bool_type(col_type[0]):
+                                if bool_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(bool_buffer[0],col_type)
+                                    if ceiling_type:
+                                        bool_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    bool_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = bool_buffer
+                            elif datatransformer.is_string_type(col_type[0]):
+                                if string_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(string_buffer[0],col_type)
+                                    if ceiling_type:
+                                        string_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    string_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[report_condition_id(i)] = string_buffer
+                            else:
+                                raise Exception("Data type({}) Not Support".format(col_type[0]))
         
                 if self.report_group_by:
                     #group_by feature is required
@@ -1363,6 +1465,12 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         closest_float_column = [None,None,None]
                         closest_string_column = [None,None,None]
                         closest_bool_column = [None,None,None]
+
+                        closest_list_int_column = [None,None,None]
+                        closest_list_float_column = [None,None,None]
+                        closest_list_string_column = [None,None,None]
+                        closest_list_bool_column = [None,None,None]
+
                         get_item_id = report_group_by_id
                         seq = -1
                         for item in itertools.chain(self.report_group_by,["|"],self.resultset):
@@ -1378,20 +1486,36 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 continue
                             col = ExecutorContext.column_map[colname]
 
-                            if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
-                                data_buffer = int_buffer 
-                                closest_column = closest_int_column
-                            elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
-                                data_buffer = float_buffer 
-                                closest_column = closest_float_column
-                            elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                data_buffer = string_buffer
-                                closest_column = closest_string_column
-                            elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
-                                data_buffer = bool_buffer
-                                closest_column = closest_bool_column
+                            if datatransformer.is_list_type(col[EXECUTOR_DTYPE]):
+                                if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = list_int_buffer 
+                                    closest_column = closest_list_int_column
+                                elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = list_float_buffer 
+                                    closest_column = closest_list_float_column
+                                elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = list_string_buffer
+                                    closest_column = closest_list_string_column
+                                elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = list_bool_buffer
+                                    closest_column = closest_list_bool_column
+                                else:
+                                    continue
                             else:
-                                continue
+                                if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = int_buffer 
+                                    closest_column = closest_int_column
+                                elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = float_buffer 
+                                    closest_column = closest_float_column
+                                elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = string_buffer
+                                    closest_column = closest_string_column
+                                elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
+                                    data_buffer = bool_buffer
+                                    closest_column = closest_bool_column
+                                else:
+                                    continue
 
                             #a same type data buffer used by report condition, try to share the buffer between report condition and (group-by or reportresult)
                             col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None)
@@ -1419,11 +1543,11 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                             closest_column[2] = [itemid,col_type]
                                     else:
                                         closest_column[2] = [itemid,col_type]
-                                else:
+                                elif t:
                                     #both the column and buff can't hold each other,the result type is greater then buffer's type and the column type
                                     #choose the column which is closest to buffer type except the current chosed column's type can hold buffer data
                                     if closest_column[2]:
-                                        if datatransformer.bigger_type(closest_column[2][1],col_type) == (closest_column[2][1]:
+                                        if datatransformer.bigger_type(closest_column[2][1],col_type) == closest_column[2][1]:
                                             #the current chosed cloest column's type can't hold buffer data, choose the smaller type
                                             closest_column[2] = [itemid,col_type]
                                     else:
@@ -1461,32 +1585,92 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             continue
                         col = ExecutorContext.column_map[item[0]]
                         col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None)
-                        if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
-                            if int_buffer:
-                                int_buffer[0] = datatransformer.ceiling_type(int_buffer[0],col_type)
+                        if datatransformer.is_list_type(col[EXECUTOR_DTYPE]):
+                            if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
+                                if list_int_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_int_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_int_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_int_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = list_int_buffer
+                            elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
+                                if list_float_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_float_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_float_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_float_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = list_float_buffer
+                            elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                if list_string_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_string_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_string_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_string_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = list_string_buffer
+                            elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
+                                if list_bool_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(list_bool_buffer[0],col_type)
+                                    if ceiling_type:
+                                        list_bool_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    list_bool_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = list_bool_buffer
                             else:
-                                int_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[resultset_id(i)] = int_buffer
-                        elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
-                            if float_buffer:
-                                float_buffer[0] = datatransformer.ceiling_type(float_buffer[0],col_type)
-                            else:
-                                float_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[resultset_id(i)] = float_buffer
-                        elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                            if string_buffer:
-                                string_buffer[0] = datatransformer.ceiling_type(string_buffer[0],col_type)
-                            else:
-                                string_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[resultset_id(i)] = string_buffer
-                        elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
-                            if bool_buffer:
-                                bool_buffer[0] = datatransformer.ceiling_type(bool_buffer[0],col_type)
-                            else:
-                                bool_buffer = [col_type,None]
-                            ExecutorContext.report_data_buffers[resultset_id(i)] = bool_buffer
+                                raise Exception("Data type({}) Not Support".format(col[EXECUTOR_DTYPE]))
                         else:
-                            raise Exception("Data type({}) Not Support".format(col[EXECUTOR_DTYPE]))
+                            if datatransformer.is_int_type(col[EXECUTOR_DTYPE]):
+                                if int_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(int_buffer[0],col_type)
+                                    if ceiling_type:
+                                        int_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    int_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = int_buffer
+                            elif datatransformer.is_float_type(col[EXECUTOR_DTYPE]):
+                                if float_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(float_buffer[0],col_type)
+                                    if ceiling_type:
+                                        float_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    float_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = float_buffer
+                            elif datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
+                                if string_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(string_buffer[0],col_type)
+                                    if ceiling_type:
+                                        string_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    string_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = string_buffer
+                            elif datatransformer.is_bool_type(col[EXECUTOR_DTYPE]):
+                                if bool_buffer:
+                                    ceiling_type = datatransformer.ceiling_type(bool_buffer[0],col_type)
+                                    if ceiling_type:
+                                        bool_buffer[0] = ceiling_type
+                                    else:
+                                        continue
+                                else:
+                                    bool_buffer = [col_type,None]
+                                ExecutorContext.report_data_buffers[resultset_id(i)] = bool_buffer
+                            else:
+                                raise Exception("Data type({}) Not Support".format(col[EXECUTOR_DTYPE]))
         
             cache_folder = os.path.join(ExecutorContext.data_cache_dir,dataset_time.strftime("%Y-%m-%d"))
             #get the cached local data file and data index file
@@ -1547,10 +1731,10 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             buffer = ExecutorContext.report_data_buffers.get(itemid)
                             if buffer:
                                 if buffer[1] is None:
-                                    buffer[1] = np.empty(datatransformer.get_type_shape(buffer[0][0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
+                                    buffer[1] = np.empty(datatransformer.get_type_shape(*buffer[0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
                                     column_data = buffer[1]
                                 elif buffer[1].shape[0] < buffer_size:
-                                    buffer[1].resize(datatransformer.get_type_shape(buffer[0][0],buffer_size))
+                                    buffer[1].resize(datatransformer.get_type_shape(*buffer[0],buffer_size))
                                     column_data = buffer[1]
                                 elif buffer[1].shape[0] > buffer_size:
                                     column_data = buffer[1][:buffer_size]
@@ -1558,7 +1742,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     column_data = buffer[1]
                             else:
                                 columntype_parameters = col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None
-                                column_data = np.empty(datatransformer.get_type_shape(col[EXECUTOR_DTYPE],buffer_size),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],columntype_parameters))
+                                column_data = np.empty(datatransformer.get_type_shape(col[EXECUTOR_DTYPE],columntype_parameters,buffer_size),dtype=datatransformer.get_np_type(col[EXECUTOR_DTYPE],columntype_parameters))
                                 ExecutorContext.report_data_buffers[itemid] = [(col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO]),column_data]
 
                             ds = index_h5[col[EXECUTOR_COLUMNNAME]]
@@ -1568,24 +1752,21 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                 #load the data from file to buffer
                                 if read_direct:
                                     ds.read_direct(column_data,np.s_[0:dataset_size],np.s_[0:dataset_size])
+                                elif datatransformer.is_list_type(col[EXECUTOR_DTYPE]):
+                                    i = 0
+                                    while i < dataset_size:
+                                        if cond_result[i]:
+                                            #only read the data which is selected by the previous conditons
+                                            for j in range(len(ds[i])):
+                                                column_data[i][j] = ds[i][j]
+                                        i += 1
                                 else:
                                     i = 0
-                                    if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                        while i < dataset_size:
-                                            if cond_result[i]:
-                                                #only read the data which is selected by the previous conditons
-                                                column_data[i] = ds[i].decode() 
-                                            else:
-                                                column_data[i] = datatransformer.get_default_value(col[EXECUTOR_DTYPE])
-                                            i += 1
-                                    else:
-                                        while i < dataset_size:
-                                            if cond_result[i]:
-                                                #only read the data which is selected by the previous conditons
-                                                column_data[i] = ds[i] 
-                                            else:
-                                                column_data[i] = datatransformer.get_default_value(col[EXECUTOR_DTYPE])
-                                            i += 1
+                                    while i < dataset_size:
+                                        if cond_result[i]:
+                                            #only read the data which is selected by the previous conditons
+                                            column_data[i] = ds[i] 
+                                        i += 1
                                 #check the conditions
                                 for itemid,col_cond in conds:
                                     cond_result &= operation.get_npfunc(col[EXECUTOR_DTYPE],col_cond[1])(column_data,col_cond[2])
@@ -1602,24 +1783,27 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
 
                                     #load the data from file to buffer
                                     if read_direct:
-                                        index_h5[col[EXECUTOR_COLUMNNAME]].read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
+                                        ds.read_direct(column_data,np.s_[start_index:end_index],np.s_[0:data_len])
+                                    elif datatransformer.is_list_type(col[EXECUTOR_DTYPE]):
+                                        i = start_index
+                                        j = 0
+                                        while i < end_index:
+                                            if cond_result[i]:
+                                                #only read the data which is selected by the previous conditons
+                                                for x in range(len(ds[i])):
+                                                    column_data[j][x] = ds[i][x]
+                                            i += 1
+                                            j += 1
+
                                     else:
                                         i = start_index
                                         j = 0
-                                        if datatransformer.is_string_type(col[EXECUTOR_DTYPE]):
-                                            while i < end_index:
-                                                if cond_result[i]:
-                                                    #only read the data which is selected by the previous conditons
-                                                    column_data[j] = ds[i].decode() 
-                                                i += 1
-                                                j += 1
-                                        else:
-                                            while i < end_index:
-                                                if cond_result[i]:
-                                                    #only read the data which is selected by the previous conditons
-                                                    column_data[j] = ds[i]
-                                                i += 1
-                                                j += 1
+                                        while i < end_index:
+                                            if cond_result[i]:
+                                                #only read the data which is selected by the previous conditons
+                                                column_data[j] = ds[i]
+                                            i += 1
+                                            j += 1
 
                                     #check the conditions
                                     v_cond_result = cond_result[start_index:end_index]
@@ -1682,8 +1866,9 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     rows = self.report_details(datareader,indexes)
 
                                 if self.report_rawdataconditions:
+                                    context["category"] = "filter the result with raw data"
                                     report_size = 0
-                                    f_conds = rawdatacondition_factory(ExecutorContext.column_map,self.report_rawdataconditions)
+                                    f_conds = rawdatacondition_factory(self,context,ExecutorContext.column_map,self.report_rawdataconditions)
                                     for row in rows:
                                         if not f_conds(row):
                                             continue
@@ -1776,7 +1961,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     read_direct = self.column_read_direct(col)
                                     if buffer:
                                         if buffer[1] is None:
-                                            buffer[1] = np.empty(datatransformer.get_type_shape(buffer[0][0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
+                                            buffer[1] = np.empty(datatransformer.get_type_shape(*buffer[0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
                                             column_data = buffer[1]
                                         elif buffer[1].shape[0] < buffer_size:
                                             buffer[1].resize((buffer_size,))
@@ -1787,7 +1972,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                             column_data = buffer[1]
                                     else:
                                         columntype_parameters = col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None
-                                        column_data = np.empty(datatransformer.get_type_shape(col_type,dataset_size,),dtype=datatransformer.get_np_type(col_type,columntype_parameters))
+                                        column_data = np.empty(datatransformer.get_type_shape(col_type,columntype_parameters,dataset_size,),dtype=datatransformer.get_np_type(col_type,columntype_parameters))
                                         ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                              
                                     ds = index_h5[colname]
@@ -1911,7 +2096,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                         read_direct = self.column_read_direct(col)
                                         if buffer:
                                             if buffer[1] is None:
-                                                buffer[1] = np.empty(datatransformer.get_type_shape(buffer[0][0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
+                                                buffer[1] = np.empty(datatransformer.get_type_shape(*buffer[0],buffer_size),dtype=datatransformer.get_np_type(*buffer[0]))
                                                 column_data = buffer[1]
                                             elif buffer[1].shape[0] < buffer_size:
                                                 buffer[1].resize((buffer_size,))
@@ -1922,7 +2107,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                                 column_data = buffer[1]
                                         else:
                                             columntype_parameters = col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None
-                                            column_data = np.empty(datatransformer.get_type_shape(col_type,buffer_size),dtype=datatransformer.get_np_type(col_type,columntype_parameters))
+                                            column_data = np.empty(datatransformer.get_type_shape(col_type,columntype_parameters,buffer_size),dtype=datatransformer.get_np_type(col_type,columntype_parameters))
                                             ExecutorContext.report_data_buffers[itemid] = [(col_type,col[EXECUTOR_COLUMNINFO]),column_data]
                                     
                                         ds = index_h5[item[0]]
@@ -2483,8 +2668,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                     cond[2] = json.loads(cond[2])
                     if isinstance(cond[2],list):
                         for i in range(len(cond[2])):
-                            if col[DRIVER_TRANSFORMER] and not col[DRIVER_COLUMNINFO].get("transform4user",False):
+                            if col[DRIVER_TRANSFORMER]:
                                 #need transformation
+                                #all list type must config transformer
                                 if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                     #is enum type
                                     cond[2][i] = datatransformer.get_enum(cond[2][i],databaseurl=self.databaseurl,columnid=col[DRIVER_COLUMNID])
@@ -2498,6 +2684,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                                         for i in range(len(cond[2])):
                                             cond[2][i] = cond[2][i].encode()
 
+                            elif datatransformer.is_list_type(col[DRIVER_DTYPE]):
+                                raise Exception("Data type({}) must config transformer".format(col[DRIVER_DTYPE]))
                             elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                                 #encode the string value
                                 cond[2][i] = (cond[2][i] or "").encode()
@@ -2517,8 +2705,9 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                             reportsize = None
                             return 
                     else:
-                        if col[DRIVER_TRANSFORMER] and not col[DRIVER_COLUMNINFO].get("transform4user",False):
+                        if col[DRIVER_TRANSFORMER]:
                             #need transformation
+                            #all list type must config transformer
                             if datatransformer.is_enum_func(col[DRIVER_TRANSFORMER]):
                                 #is enum type
                                 if cond[1] == "pattern":
@@ -2535,6 +2724,8 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
                                 if datatransformer.is_string_type(col[DRIVER_DTYPE]):
                                     cond[2] = cond[2]
+                        elif datatransformer.is_list_type(col[DRIVER_DTYPE]):
+                            raise Exception("Data type({}) must config transformer".format(col[DRIVER_DTYPE]))
                         elif datatransformer.is_string_type(col[DRIVER_DTYPE]):
                             #encode the string value
                             cond[2]= (cond[2] or "").encode()

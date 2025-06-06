@@ -1,7 +1,7 @@
 import numpy  as np
 import logging
 
-from ..datatransformer import is_number_type,get_np_type,is_string_type,get_type_shape
+from ..datatransformer import is_number_type,get_np_type,is_string_type,get_type_shape,is_list_type
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def _in_iprange(ip,iprange):
                 subnetmaskgroups = [int(d,16) if d else 0 for d in subnetmask.split(":")]
                 if cidrbits % 16 > 0:
                     partgroup = int(subnetmask[5 * groups:5 * groups + 4],16)
-                    mask = int("{}{}".format()"1" *  (cidrbits % 16),"0" * (16 - cidrbits * 16)),2)
+                    mask = int("{}{}".format("1" *  (cidrbits % 16),"0" * (16 - cidrbits * 16)),2)
                     partgroupmask = partgroup & mask
                     if groups == 0:
                         iprange_data = (601,partgroupmask)
@@ -49,7 +49,7 @@ def _in_iprange(ip,iprange):
     
                 if cidrbits % 8 > 0:
                     partgroup = int(subnetmask[index:].split(".",1)[0])
-                    mask = int("{}{}".format()"1" *  (cidrbits % 8),"0" * (8 - cidrbits * 8)),2)
+                    mask = int("{}{}".format("1" *  (cidrbits % 8),"0" * (8 - cidrbits * 8)),2)
                     partgroupmask = partgroup & mask
                     if groups == 0:
                         if groups == 3:
@@ -140,34 +140,95 @@ def _in_iprange(ip,iprange):
 number_npoperator_map = {
     "==":lambda val,cond:np.equal(val,cond),
     "=":lambda val,cond:np.equal(val,cond),
-    "!=":lambda val,np.logical_not(cond:np.equal(val,cond)),
-    "<>":lambda val,np.logical_not(cond:np.equal(val,cond)),
+    "!=":lambda val,cond:np.logical_not(np.equal(val,cond)),
+    "<>":lambda val,cond:np.logical_not(np.equal(val,cond)),
     ">":lambda val,cond:np.greater(val,cond),
     ">=":lambda val,cond:np.greater_equal(val,cond),
     "<":lambda val,cond:np.less(val,cond),
     "<=":lambda val,cond:np.less_equal(val,cond),
     "between":lambda val,cond:np.logical_and(np.greater_equal(val,cond[0]) , np.less(val,cond[1])),
-    "in":lambda val,cond: np.any(np.equal(cond,val)),
-    "not in":lambda val,cond: np.logical_not(np.any(np.equal(cond,val))),
+    "in":lambda val,cond: np.isin(cond,val),
+    "not in":lambda val,cond: np.logical_not(np.isin(cond,val)),
     "avg_sum":lambda val:np.sum(val),
     "sum":lambda val:np.sum(val),
     "min":lambda val:np.min(val),
     "max":lambda val:np.max(val)
 }
+def _string_equal(val,cond):
+    logger.error("val={},cond={}".format(val[0:10],cond))
+    return np.equal(val,cond)
+
+def _string_mcontain(val,cond):
+    return np.logical_or.reduce([np.greater_equal(np.char.find(val,c),0) for c in cond],0)
 
 string_npoperator_map = {
     "==":lambda val,cond:np.equal(val,cond),
     "=":lambda val,cond:np.equal(val,cond),
     "!=":lambda val,cond:np.logical_not(np.equal(val,cond)),
     "<>":lambda val,cond:np.logical_not(np.equal(val,cond)),
-    "in":lambda val,cond:np.any(np.equal(val,cond)),
-    "contain":lambda val,cond:np.greater_equal(np.char.find(val,cond),0)
-    "mcontain":lambda val,cond:np.any(np.greater_equal(np.char.find(val,cond),0)),
-    "not contain":lambda val,cond:np.equal(np.char.find(val,cond),-1),
+    "in":lambda val,cond:np.isin(val,cond),
+    "contain":lambda val,cond:np.greater_equal(np.char.find(val,cond),0),
+    "not contain":lambda val,cond:np.euqal(np.char.find(val,cond),-1),
+    "mcontain":lambda val,cond:np.logical_or.reduce([np.greater_equal(np.char.find(val,c),0) for c in cond],0),
+    "not mcontain":lambda val,cond:np.logical_and.reduce([np.equal(np.char.find(val,c),-1) for c in cond],0),
     "endswith":lambda val,cond:np.char.endswith(val,cond),
-    "mendswith":lambda val,cond:np.any(np.char.endswith(val,cond)),
+    "not endswith":lambda val,cond:np.logical_not(np.char.endswith(val,cond)),
+    "mendswith":lambda val,cond:np.logical_or.reduce([np.char.endswith(val,c) for c in cond],0),
+    "not mendswith":lambda val,cond:np.logical_not(np.logical_or.reduce([np.char.endswith(val,c) for c in cond],0)),
     "startswith":lambda val,cond:np.char.startswith(val,cond),
-    "mstartswith":lambda val,cond:np.any(np.char.startswith(val,cond))
+    "not startswith":lambda val,cond:np.logical_not(np.char.startswith(val,cond)),
+    "mstartswith":lambda val,cond:np.logical_or.reduce([np.char.startswith(val,c) for c in cond],0),
+    "not mstartswith":lambda val,cond:np.logical_not(np.logical_or.reduce([np.char.startswith(val,c) for c in cond],0))
+}
+def _list_number_equal(val,cond):
+    if val.shape[1] != len(cond):
+        return np.broadcast_to(False,val.shape[0])
+    return np.logical_and.reduce(np.equal(val,cond),-1)
+
+def _list_number_notequal(val,cond):
+    return np.logical_not(_list_number_equal(val,cond))
+
+def _list_number_in(val,cond):
+    if len(cond) == 1:
+        return _list_number_equal(val,cond[0])
+
+    if val.shape[1] != len(cond[0]):
+        return np.broadcast_to(False,val.shape[0])
+    return np.logical_and.reduce(np.isin(val,cond),-1)
+
+def _list_number_notin(val,cond):
+    return np.logical_not(_list_number_in(val,cond))
+
+def _list_number_range(val,cond):
+    return np.logical_and.reduce(np.logical_and(np.greater_equal(val,cond[0]),np.less_equal(val,cond[1])),-1)
+
+def _list_number_ranges(val,cond):
+    if len(cond) == 1:
+        return _list_number_range(val,cond[0])
+    else:
+        return np.logical_or.reduce([np.logical_and.reduce( np.logical_and(np.greater_equal(val,c[0]),np.less_equal(val,c[1])) ,-1) for c in cond],0)
+
+def _list_number_not_in_range(val,cond):
+    return np.logical_not(_list_number_range(val,cond))
+
+def _list_number_not_in_ranges(val,cond):
+    if len(cond) == 1:
+        return np.logical_not(_list_number_range(val,cond[0]))
+    else:
+        return np.logical_not(_list_number_ranges(val,cond))
+
+list_number_npoperator_map = {
+    "==":_list_number_equal,
+    "=":_list_number_equal,
+    #"=":lambda val,cond:np.logical_and(np.equal(val.size,cond.size),np.equal(val,cond)),
+    "!=":_list_number_notequal,
+    "<>":_list_number_notequal,
+    "in":_list_number_in,
+    "not in":_list_number_notin,
+    "range":_list_number_range,
+    "not in range":_list_number_not_in_range,
+    "ranges":_list_number_ranges,
+    "not in ranges":_list_number_not_in_ranges,
 }
 
 agg_operator_map = {
@@ -189,6 +250,19 @@ number_operator_map = {
     "between":lambda val,cond:l >= cond[0] and l < cond[1],
     "in":lambda val,conds: l in conds,
     "not in":lambda val,conds: l not in conds
+}
+
+list_number_operator_map = {
+    "==":lambda val,cond: val == cond,
+    "=":lambda val,cond: val == cond,
+    "!=":lambda val,cond: val != cond,
+    "<>":lambda val,cond: val != cond,
+    "in":lambda val,cond: any(val == c for c in cond),
+    "not in":lambda val,cond: all(val != c for c in cond),
+    "range":lambda val,cond: val >= cond[0] and val<=cond[1],
+    "not in range":lambda val,cond: not(val >= cond[0] and val<=cond[1]),
+    "ranges":lambda val,cond: any(val >= c[0] and val<=c[1] for c in cond),
+    "not in ranges":lambda val,cond: not(any(val >= c[0] and val<=c[1] for c in cond))
 }
 
 string_operator_map = {
@@ -238,18 +312,32 @@ merge_operator_map = {
 }
 
 def get_npfunc(dtype,operator):
-    if is_number_type(dtype):
-        try:
-            return number_npoperator_map[operator]
-        except KeyError as ex:
-            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
-    elif is_string_type(dtype):
-        try:
-            return string_npoperator_map[operator]
-        except KeyError as ex:
+    if is_list_type(dtype):
+        if is_number_type(dtype):
+            try:
+                return list_number_npoperator_map[operator]
+            except KeyError as ex:
+                raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        elif is_string_type(dtype) and False:
+            try:
+                return string_npoperator_map[operator]
+            except KeyError as ex:
+                raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        else:
             raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
     else:
-        raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        if is_number_type(dtype):
+            try:
+                return number_npoperator_map[operator]
+            except KeyError as ex:
+                raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        elif is_string_type(dtype):
+            try:
+                return string_npoperator_map[operator]
+            except KeyError as ex:
+                raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
+        else:
+            raise Exception("Operator({}) is not supported for type({})".format(operator,get_np_type(dtype)))
 
 def get_func(dtype,operator):
     if is_number_type(dtype):
