@@ -1131,9 +1131,8 @@ class DatasetAppDownloadExecutor(DatasetColumnConfig):
                                                 #create the buffer and hdf5 dataset for column
                                                 if column_name not in indexdatasets:
                                                     if column_name in tmp_h5:
-                                                        indexdatasets[column_name] = tmp_h5[column_name]
-                                                    else:
-                                                        indexdatasets[column_name] = tmp_h5.create_dataset(column_name, datatransformer.get_type_shape(column_dtype,columntype_parameters,dataset_size),dtype=datatransformer.get_hdf5_type(column_dtype,columntype_parameters))
+                                                        del tmp_h5[column_name]
+                                                    indexdatasets[column_name] = tmp_h5.create_dataset(column_name, datatransformer.get_type_shape(column_dtype,columntype_parameters,dataset_size),dtype=datatransformer.get_hdf5_type(column_dtype,columntype_parameters))
                                                     indexdatasets[column_name].attrs["created"] = created
     
                                                 if column_name not in ExecutorContext.indexbuffs:
