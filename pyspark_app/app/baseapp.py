@@ -1515,6 +1515,9 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                     closest_column = closest_bool_column
                                 else:
                                     continue
+                            if not data_buffer:
+                                #no buffer to share
+                                continue
 
                             #a same type data buffer used by report condition, try to share the buffer between report condition and (group-by or reportresult)
                             col_type = (col[EXECUTOR_DTYPE],col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None)
