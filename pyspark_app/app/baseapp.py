@@ -1,6 +1,7 @@
 import logging
 import traceback
 import os
+from functools import cmp_to_key
 import re
 import itertools
 import collections
@@ -1913,7 +1914,12 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                         for item in self.resultset:
                             if item[0] == "*":
                                 #use the first group by column to calculate the count
-                                colname = self.report_group_by[0]
+                                col = ExecutorContext.column_map[self.report_group_by[0]]
+                                col_type = col[EXECUTOR_DTYPE]
+                                if datatransformer.is_list_type(col_type):
+                                    colname = "{}_0".format(self.report_group_by[0])
+                                else:
+                                    colname = self.report_group_by[0]
                             else:
                                 colname = item[0]
                             if colname in statics_map:
@@ -1943,7 +1949,7 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                             if self.report_type != NoneReportType:
                                 df_datas["__request_time__"] = self.report_type.format(dataset_time)
 
-
+                            report_group_by = None
                             for item in itertools.chain(self.report_group_by,["|"],self.resultset):
                                 seq += 1
                                 if item == "|":
@@ -2015,21 +2021,41 @@ class DatasetAppReportExecutor(DatasetColumnConfig):
                                                         data_len += 1
                                                     j += 1
     
-                                if filtered_rows == dataset_size:
-                                    #all records are satisfied with the report condition
-                                    df_datas[colname] = column_data[:data_len]
-                                elif read_direct:
-                                    df_datas[colname] = column_data[:data_len][cond_result[start_index:end_index]]
+                                if datatransformer.is_list_type(col_type) and colname == item:
+                                    #pd doesn't support multidimension key, flat the multidimension to multiple columns
+                                    columntype_parameters = col[EXECUTOR_COLUMNINFO].get("type_parameters") if col[EXECUTOR_COLUMNINFO] else None
+                                    size = datatransformer.get_list_size(col_type,columntype_parameters)
+                                    if not report_group_by:
+                                        report_group_by = list(self.report_group_by)
+                                    pos = report_group_by.index(colname)
+                                    del report_group_by[pos]
+                                    for i in range(size):
+                                        if filtered_rows == dataset_size:
+                                            #all records are satisfied with the report condition
+                                            df_datas["{}_{}".format(colname,i)] = column_data[:data_len][:,i]
+                                        elif read_direct:
+                                            df_datas["{}_{}".format(colname,i)] = column_data[:data_len][cond_result[start_index:end_index]][:,i]
+                                        else:
+                                            df_datas["{}_{}".format(colname,i)] = column_data[:data_len][:,i]
+                                        report_group_by.insert(pos + i,"{}_{}".format(colname,i))
+
+
                                 else:
-                                    df_datas[colname] = column_data[:data_len]
+                                    if filtered_rows == dataset_size:
+                                        #all records are satisfied with the report condition
+                                        df_datas[colname] = column_data[:data_len]
+                                    elif read_direct:
+                                        df_datas[colname] = column_data[:data_len][cond_result[start_index:end_index]]
+                                    else:
+                                        df_datas[colname] = column_data[:data_len]
             
                             #create pandas dataframe
                             df = pd.DataFrame(df_datas)
                             #get the group object
                             if self.report_type == NoneReportType:
-                                df_group = df.groupby(self.report_group_by,group_keys=True)
+                                df_group = df.groupby(report_group_by or self.report_group_by,group_keys=True)
                             else:
-                                df_group = df.groupby(["__request_time__",*self.report_group_by],group_keys=True)
+                                df_group = df.groupby(["__request_time__",*(report_group_by or self.report_group_by)],group_keys=True)
                             #perfrom the statistics on group
                             df_result = df_group.agg(statics_map)
         
@@ -2404,7 +2430,7 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
     
         return _func
 
-    def get_group_key_data_4_sortby_factory(self,pos,columnid,sort_type):
+    def get_group_key_data_4_sortby_factory(self,pos,columnid):
         def _func1(data):
             """
             For single group-by column.
@@ -2428,24 +2454,71 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         return _func1 if len(self.report_group_by) == 1 else _func2
 
     @staticmethod
-    def get_column_data_4_sortby_factory(f_get_column_data,sort_type):
+    def get_column_data_4_sortby_factory(f_get_column_data):
     
         def _func(data):
-            if sort_type:
-                return f_get_column_data(data[1])
-            else:
-                return -1 * f_get_column_data(data[1])
+            return f_get_column_data(data[1])
     
         return _func
 
     @staticmethod
-    def _group_by_key_iterator(keys):
+    def get_sortby_key_factory(report_sort_by):
+        def _compare1(data1,data2):
+            d1 = report_sort_by[0][2](data1)
+            d2 = report_sort_by[0][2](data2)
+            if d1 == d2:
+                return 0
+            elif report_sort_by[0][1]:
+                return -1 if d1 < d2 else 1
+            else:
+                return 1 if d1 < d2 else -1
+
+        def _compare2(data1,data2):
+            for item in report_sort_by:
+                d1 = item[2](data1)
+                d2 = item[2](data2)
+                if d1 == d2:
+                    continue
+                elif item[1]:
+                    return -1 if d1 < d2 else 1
+                else:
+                    return 1 if d1 < d2 else -1
+            return 0
+
+        return cmp_to_key(_compare1) if len(report_sort_by) == 1 else cmp_to_key(_compare2)
+
+    def _group_by_key_iterator(self,keys):
         """
         return an iterator of group keys, (group keys can be a list or a single string
         """
         if isinstance(keys,(list,tuple)):
-            for k in keys:
-                yield k
+            j = 0
+            for colname in self.report_group_by:
+                if colname == "__request_time__":
+                    yield keys[j]
+                    j += 1
+                else:
+                    col = self.column_map[colname]
+                    col_dtype = col[DRIVER_DTYPE]
+                    if datatransformer.is_list_type(col_dtype):
+                        col_parameters = col[DRIVER_COLUMNINFO].get("type_parameters") if  col[DRIVER_COLUMNINFO] else None
+                        dimension = datatransformer.get_list_size(col_dtype,col_parameters)
+                        func = col[DRIVER_COLUMNINFO].get("to_string") if  col[DRIVER_COLUMNINFO] else None
+                        val = [keys[j + n] for n in range(dimension)]
+                        j += dimension
+                        if func:
+                            if isinstance(func,dict):
+                                if func.get("parameters"):
+                                    yield datatransformer.get_transformer(self.databaseurl,func["func"])(val,**func.get("parameters"))
+                                else:
+                                    yield datatransformer.get_transformer(self.databaseurl,func["func"])(val)
+                            else:
+                                yield datatransformer.get_transformer(self.databaseurl,func)(val)
+                        else:
+                            yield val
+                    else:
+                        yield keys[j]
+                        j += 1
         else:
             yield keys
     
@@ -3166,35 +3239,83 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
                             enum_colids[i] = colid
                     #sort the data if required
                     if self.report_sort_by:
+                        report_group_by = None
+                        for colname in self.report_group_by:
+                            col = self.column_map.get(colname)
+                            if not col:
+                                #not a valid column
+                                continue
+                            col_dtype = col[DRIVER_DTYPE]
+                            if datatransformer.is_list_type(col_dtype):
+                                col_parameters = col[DRIVER_COLUMNINFO].get("type_parameters") if  col[DRIVER_COLUMNINFO] else None
+                                if not report_group_by:
+                                    report_group_by = list(self.report_group_by)
+                                pos = report_group_by.index(colname)
+                                del report_group_by[pos]
+                                dimension = datatransformer.get_list_size(col_dtype,col_parameters)
+                                for i in range(dimension):
+                                    report_group_by.insert(pos + i,"{}_{}".format(colname,i))
+
+                        if not report_group_by:
+                            report_group_by = self.report_group_by
+
+                        report_sort_by = None
                         for i in range(len(self.report_sort_by) - 1,-1,-1): 
                             item = self.report_sort_by[i]
                             try:
                                 #sort-by column is a group-by column
-                                pos = self.report_group_by.index(item[0])
                                 if item[0] == "__request_time__":
-                                    item.append(self.get_group_key_data_4_sortby_factory(pos,None,item[1]))
+                                    item.append(self.get_group_key_data_4_sortby_factory(report_group_by.index(item[0]),None))
                                 else:
                                     col = self.column_map[item[0]]
-                                    if enum_colids and enum_colids[pos] and not datatransformer.is_group_func(col[DRIVER_TRANSFORMER]):
-                                        item.append(self.get_group_key_data_4_sortby_factory(pos,enum_colids[pos],item[1]))
+                                    col_dtype = col[DRIVER_DTYPE]
+                                    if datatransformer.is_list_type(col_dtype):
+                                        col_parameters = col[DRIVER_COLUMNINFO].get("type_parameters") if  col[DRIVER_COLUMNINFO] else None
+                                        dimension = datatransformer.get_list_size(col_dtype,col_parameters)
+                                        if not report_sort_by:
+                                            #clone the report_sort_by if not cloned before
+                                            report_sort_by = list(self.report_sort_by)
+
+                                        original_item = item
+                                        #remove the origial item from report_sort_by
+                                        pos = report_sort_by.index(item)
+                                        del report_sort_by[report_sort_by.index(item)]
+                                        #insert the list of item to report_sort_by
+                                        for j in range(dimension):
+                                            item = list(original_item)
+                                            item.append(self.get_group_key_data_4_sortby_factory(report_group_by.index("{}_{}".format(item[0],j)),None))
+                                            report_sort_by.insert(pos + j,item)
                                     else:
-                                        item.append(self.get_group_key_data_4_sortby_factory(pos,None,item[1]))
+                                        pos = report_group_by.index(item[0])
+                                        original_pos = self.report_group_by.index(item[0])
+                                        if enum_colids and enum_colids[original_pos] and not datatransformer.is_group_func(col[DRIVER_TRANSFORMER]):
+                                            item.append(self.get_group_key_data_4_sortby_factory(pos,enum_colids[original_pos]))
+                                        else:
+                                            item.append(self.get_group_key_data_4_sortby_factory(pos,None))
                                 
-                            except ValueError as ex:
+                            except (ValueError,KeyError) as ex:
                                 #sort-by column is a resultset column
                                 pos = next((i for i in range(len(original_resultset)) if original_resultset[i][2] == item[0] ),-1)
-                                if pos == -1:
-                                    #invalid sorg-by column
-                                    del self.report_sort_by[i]
+                                if report_sort_by:
+                                    #report_sort_by is cloned, need to get the new position in cloned report_sort_by
+                                    j = report_sort_by.index(item)
+                                    if pos == -1:
+                                        #invalid sorg-by column
+                                        del report_sort_by[j]
+                                        del self.report_sort_by[i]
+                                    else:
+                                        item.append(self.get_column_data_4_sortby_factory(original_resultset[pos][3]))
+                                    
                                 else:
-                                    item.append(self.get_column_data_4_sortby_factory(original_resultset[pos][3],item[1]))
-    
+                                    if pos == -1:
+                                        #invalid sorg-by column
+                                        del self.report_sort_by[i]
+                                    else:
+                                        item.append(self.get_column_data_4_sortby_factory(original_resultset[pos][3]))
     
                         if self.report_sort_by:
-                            if len(self.report_sort_by) == 1:
-                                report_result = sorted(report_result,key=self.report_sort_by[0][2])
-                            else:
-                                report_result = sorted(report_result,key=lambda data:[ item[2](data) for item in self.report_sort_by])
+                            report_result.sort(key=self.get_sortby_key_factory(report_sort_by or self.report_sort_by))
+
     
                 elif self.report_type != NoneReportType:
                     #sort by request_time

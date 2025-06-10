@@ -86,6 +86,19 @@ _DATA_TYPES = {
 def get_default_value(t):
     return _DATA_TYPES[t][2]
 
+def get_list_size(t,params):
+    if t < 1000:
+        raise Exception("{} is not a list type".format(t))
+    dimension = params.get("dimension") if params else None
+    if not dimension:
+        raise Exception("Please configure the dimension of data type '{}'".format(get_np_type_desc(t,params)))
+
+    if isinstance(dimension,int):
+        return dimension
+    else:
+        raise Exception("Don't support multi dimensions of data type '{}'".format(get_np_type_desc(t,params)))
+
+
 def get_type_shape(t,params,datasize):
     if t < 1000:
         return (datasize,)

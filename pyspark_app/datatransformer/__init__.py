@@ -9,7 +9,7 @@ from .. import utils
 from . import datetimes 
 from . import enums 
 from . import adb2c
-from . import datatransformer
+from .datatransformer import get_transformer
 from .. import database
 from ..utils import timezone
 from .enums import get_enum,get_enum_key,search_enums
@@ -34,7 +34,7 @@ def transform(f_name,val,databaseurl=None,columnid=None,context=None,record=None
             try:
                 _func = _declared_transformers[transformer]
             except KeyError as ex:
-                _func = transformer_factory(datatransformer.get_transformer(databaseurl,transformer))
+                _func = transformer_factory(get_transformer(databaseurl,transformer))
                 _declared_transformers[transformer] = _func
             return _func[0](_func[1],val,databaseurl=databaseurl,columnid=columnid,context=context,record=record,columnname=columnname,return_id=return_id,**kwargs)
         else:

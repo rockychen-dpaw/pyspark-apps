@@ -137,6 +137,11 @@ def _in_iprange(ip,iprange):
 
     return True
 
+def _number_in(val,cond):
+    result = np.isin(cond,val)
+    logger.error("val={}, cond={}, result={}".format(val,cond,result))
+    return result
+
 number_npoperator_map = {
     "==":lambda val,cond:np.equal(val,cond),
     "=":lambda val,cond:np.equal(val,cond),
@@ -147,8 +152,9 @@ number_npoperator_map = {
     "<":lambda val,cond:np.less(val,cond),
     "<=":lambda val,cond:np.less_equal(val,cond),
     "between":lambda val,cond:np.logical_and(np.greater_equal(val,cond[0]) , np.less(val,cond[1])),
-    "in":lambda val,cond: np.isin(val,cond),
-    "not in":lambda val,cond: np.logical_not(np.isin(val,cond)),
+    #"in":lambda val,cond: np.isin(cond,val),
+    "in":_number_in,
+    "not in":lambda val,cond: np.logical_not(np.isin(cond,val)),
     "avg_sum":lambda val:np.sum(val),
     "sum":lambda val:np.sum(val),
     "min":lambda val:np.min(val),
