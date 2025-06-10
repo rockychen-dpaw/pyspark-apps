@@ -239,17 +239,17 @@ agg_operator_map = {
 }
 
 number_operator_map = {
-    "==":lambda val,cond: l == cond,
-    "=":lambda val,cond:l == cond,
-    "!=":lambda val,cond: l != cond,
-    "<>":lambda val,cond: l != cond,
-    ">":lambda val,cond: l > cond,
-    ">=":lambda val,cond: l >= cond,
-    "<":lambda val,cond:l < cond,
-    "<=":lambda val,cond:l <= cond,
-    "between":lambda val,cond:l >= cond[0] and l < cond[1],
-    "in":lambda val,conds: l in conds,
-    "not in":lambda val,conds: l not in conds
+    "==":lambda val,cond: val == cond,
+    "=":lambda val,cond: val == cond,
+    "!=":lambda val,cond: val != cond,
+    "<>":lambda val,cond: val != cond,
+    ">":lambda val,cond: val > cond,
+    ">=":lambda val,cond: val >= cond,
+    "<":lambda val,cond:val < cond,
+    "<=":lambda val,cond:val <= cond,
+    "between":lambda val,cond:val >= cond[0] and l < cond[1],
+    "in":lambda val,conds: val in conds,
+    "not in":lambda val,conds: val not in conds
 }
 
 list_number_operator_map = {
