@@ -2205,18 +2205,6 @@ DRIVER_FILTERABLE=5
 DRIVER_GROUPABLE=6
 DRIVER_DISTINCTABLE=7
 
-def distinct_transform_factory(distinct_columns,has_group_by):
-    exclude_null = [ True if c[1] == "distinct_exclude_null" else False for c in distinct_columns]
-    length = len(distinct_columns)
-    def _func1(d):
-        return [[d[0][:-1 * length],[0 if any(True for i in range(length) if exclude_null[i] and not d[0][i - length]) else 1 ,*d[1]]]]
-
-    def _func2(d):
-        return [[0 if any(True for i in range(length) if exclude_null[i] and not d[0][i - length]) else 1 ,*d[1]]]
-    
-    return _func1 if has_group_by else _func2
-
-
 class ReportAlreadyGenerated(Exception):
     pass
     
@@ -2405,6 +2393,39 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
         
         return data1
     
+    def distinct_transform_factory(self,distinct_columns,has_group_by):
+        endindex = None
+        startindex = None
+        length = 0
+
+        for column in reversed(distinct_columns):
+            col = self.column_map[column[0]]
+            col_dtype = col[DRIVER_DTYPE]
+            if datatransformer.is_list_type(col_dtype):
+                col_parameters = col[DRIVER_COLUMNINFO].get("type_parameters") if  col[DRIVER_COLUMNINFO] else None
+                dimension = datatransformer.get_list_size(col_dtype,col_parameters)
+                if endindex:
+                    startindex = endindex - dimension
+                else:
+                    endindex = -1 * dimension
+                length += dimension
+            else:
+                if endindex:
+                    startindex = endindex -1
+                else:
+                    startindex = -1
+                length += 1
+            column.append((startindex,endindex, column[1] == "distinct_exclude_null"))
+            endindex = startindex
+
+        def _func1(d):
+            return [[d[0][:-1 * length],[1 if any(True for column in distinct_columns if not column[-1][2] or any(d[0][column[-1][0]:column[-1][1]]) ) else 0 ,*d[1]]]]
+    
+        def _func2(d):
+            return [[1 if any(True for column in distinct_columns if not column[-1][2] or any(d[0][column[-1][0]:column[-1][1]]) ) else 0 ,*d[1]]]
+        
+        return _func1 if has_group_by else _func2
+
     @staticmethod
     def get_report_data_factory(pos):
         """
@@ -3179,10 +3200,10 @@ class DatasetAppReportDriver(DatasetAppDownloadDriver):
 
                         #remove distinct columns from key and add a column into value
                         if len(self.report_group_by) == len(self.distinct_columns) and self.report_type == NoneReportType:
-                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,False))
+                            rdd3 = rdd2.flatMap(self.distinct_transform_factory(self.distinct_columns,False))
                             report_result = [rdd3.reduce(self.merge_reportresult)]
                         else:
-                            rdd3 = rdd2.flatMap(distinct_transform_factory(self.distinct_columns,True))
+                            rdd3 = rdd2.flatMap(self.distinct_transform_factory(self.distinct_columns,True))
                             report_result = rdd3.reduceByKey(self.merge_reportresult).collect()
 
                         #remove distinct columns from report_group_by
