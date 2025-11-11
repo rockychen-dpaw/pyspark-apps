@@ -16,14 +16,14 @@ setup(
     zip_safe=False,
     keywords=['pyspark','datascience'],
     install_requires=[
-        'numpy==2.2.0',
-        'pandas==2.2.3',
-        'h5py==3.13.0',
+        'numpy==2.3.0',
+        'pandas==2.3.3',
+        'h5py==3.15.1',
         'pytz==2025.2',
-        'psutil==7.0.0',
-        'azure-storage-blob==12.25.1',
-        'maxminddb==2.7.0',
-        'msal==1.32.3'
+        'psutil==7.1.3',
+        'azure-storage-blob==12.27.1',
+        'maxminddb==3.0.0',
+        'msal==1.34.0'
     ],
     classifiers=[
         'Framework :: Pyspark',
