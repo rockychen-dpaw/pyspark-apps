@@ -20,7 +20,7 @@ setup(
         'pandas==2.3.3',
         'h5py==3.15.1',
         'pytz==2025.2',
-        'psutil==7.1.3',
+        'psutil==7.2',
         'azure-storage-blob==12.27.1',
         'maxminddb==3.0.0',
         'msal==1.34.0'
